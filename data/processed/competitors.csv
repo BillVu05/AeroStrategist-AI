@@ -1,0 +1,9 @@
+origin,destination,competitor_name,weekly_frequency,avg_fare_usd,rating
+SYD,SIN,Regional Star Airways,7,383.04,4.3
+SYD,SIN,Crosswind Air,5,423.36,4.0
+SYD,NRT,Skyline Pacific,4,510.26,4.2
+SYD,MEL,Coastal Express,21,103.89,3.9
+SYD,MEL,Golden Wing,14,112.92,4.1
+SYD,AKL,Tasman Air,7,212.82,4.2
+SYD,AKL,Crosswind Air,4,221.5,4.0
+SYD,DAD,Mekong Air,3,398.92,3.8

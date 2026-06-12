@@ -1,0 +1,7 @@
+iata,name,city,country,lat,lon,distance_from_syd_km
+AKL,Auckland International Airport,Auckland,NZ,-37.01199,174.786331,2159.1
+NRT,Narita International Airport,Narita,JP,35.76858,140.388714,7832.5
+DAD,Da Nang International Airport,Da Nang,VN,16.0439,108.198997,7183.1
+SIN,Singapore Changi Airport,Singapore,SG,1.35019,103.994003,6293.4
+MEL,Melbourne Airport,Melbourne,AU,-37.670732,144.837898,705.6
+SYD,Sydney Kingsford Smith International Airport,Sydney (Mascot),AU,-33.946098,151.177002,0.0

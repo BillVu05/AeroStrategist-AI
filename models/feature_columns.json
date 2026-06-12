@@ -1,0 +1,12 @@
+[
+  "distance_km",
+  "gdp_usd",
+  "gdp_growth_pct",
+  "population",
+  "tourism_arrivals_baseline",
+  "competitor_count",
+  "competitor_avg_fare_usd",
+  "avg_fare_usd",
+  "month_sin",
+  "month_cos"
+]

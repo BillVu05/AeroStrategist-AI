@@ -1,0 +1,145 @@
+{
+  "airline": {
+    "name": "Pacific Wings",
+    "base": "SYD",
+    "fleet": [
+      {
+        "type": "A320-200",
+        "manufacturer": "Airbus",
+        "seats": {
+          "business": 12,
+          "economy": 138,
+          "total": 150
+        },
+        "range_km": 6150,
+        "cruise_fuel_burn_kg_per_hour": 2400,
+        "cruise_speed_kmh": 828,
+        "casm_usd": 0.075
+      },
+      {
+        "type": "A321neo",
+        "manufacturer": "Airbus",
+        "seats": {
+          "business": 16,
+          "economy": 184,
+          "total": 200
+        },
+        "range_km": 7400,
+        "cruise_fuel_burn_kg_per_hour": 2800,
+        "cruise_speed_kmh": 828,
+        "casm_usd": 0.065
+      },
+      {
+        "type": "B787-9",
+        "manufacturer": "Boeing",
+        "seats": {
+          "business": 42,
+          "premium_economy": 28,
+          "economy": 166,
+          "total": 236
+        },
+        "range_km": 14140,
+        "cruise_fuel_burn_kg_per_hour": 5400,
+        "cruise_speed_kmh": 903,
+        "casm_usd": 0.055
+      }
+    ]
+  },
+  "routes": [
+    {
+      "origin": "SYD",
+      "destination": "SIN",
+      "destination_name": "Singapore Changi Airport",
+      "destination_city": "Singapore",
+      "destination_country": "SG",
+      "distance_km": 6293.4,
+      "status": "active",
+      "weekly_frequency": 7,
+      "assigned_aircraft": "A321neo",
+      "flight_duration_hours": 7.6,
+      "market": {
+        "snapshot_year": 2019,
+        "gdp_usd": 376161998830.048,
+        "gdp_growth_pct": 1.30804118153127,
+        "population": 5703569,
+        "tourism_arrivals": 19116000
+      }
+    },
+    {
+      "origin": "SYD",
+      "destination": "NRT",
+      "destination_name": "Narita International Airport",
+      "destination_city": "Narita",
+      "destination_country": "JP",
+      "distance_km": 7832.5,
+      "status": "active",
+      "weekly_frequency": 5,
+      "assigned_aircraft": "B787-9",
+      "flight_duration_hours": 8.67,
+      "market": {
+        "snapshot_year": 2019,
+        "gdp_usd": 5117993853016.51,
+        "gdp_growth_pct": -0.402169200894946,
+        "population": 126633000,
+        "tourism_arrivals": 31881000
+      }
+    },
+    {
+      "origin": "SYD",
+      "destination": "MEL",
+      "destination_name": "Melbourne Airport",
+      "destination_city": "Melbourne",
+      "destination_country": "AU",
+      "distance_km": 705.6,
+      "status": "active",
+      "weekly_frequency": 14,
+      "assigned_aircraft": "A320-200",
+      "flight_duration_hours": 0.85,
+      "market": {
+        "snapshot_year": 2019,
+        "gdp_usd": 1398349602956.35,
+        "gdp_growth_pct": 2.19401703622717,
+        "population": 25334826,
+        "tourism_arrivals": 9466000
+      }
+    },
+    {
+      "origin": "SYD",
+      "destination": "AKL",
+      "destination_name": "Auckland International Airport",
+      "destination_city": "Auckland",
+      "destination_country": "NZ",
+      "distance_km": 2159.1,
+      "status": "active",
+      "weekly_frequency": 7,
+      "assigned_aircraft": "A320-200",
+      "flight_duration_hours": 2.61,
+      "market": {
+        "snapshot_year": 2019,
+        "gdp_usd": 213006341101.869,
+        "gdp_growth_pct": 2.31747144034802,
+        "population": 4970300,
+        "tourism_arrivals": 3888000
+      }
+    },
+    {
+      "origin": "SYD",
+      "destination": "DAD",
+      "destination_name": "Da Nang International Airport",
+      "destination_city": "Da Nang",
+      "destination_country": "VN",
+      "distance_km": 7183.1,
+      "status": "candidate",
+      "weekly_frequency": 0,
+      "assigned_aircraft": "A321neo",
+      "flight_duration_hours": 8.68,
+      "market": {
+        "snapshot_year": 2019,
+        "gdp_usd": 334365270496.667,
+        "gdp_growth_pct": 7.35926270105006,
+        "population": 97173776,
+        "tourism_arrivals": 18009000
+      }
+    }
+  ]
+}

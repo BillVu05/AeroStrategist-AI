@@ -1,0 +1,45 @@
+{
+  "_source_notes": "Seat configs based on typical two/three-class configurations used by real operators (e.g., Qantas A320/A321/787-9 family). Range and cruise fuel burn are publicly published manufacturer figures (Airbus/Boeing spec sheets). CASK (cost per available-seat-km, USD) is an approximate industry-typical figure derived from published airline cost reports (IATA/CAPA economic analyses) - treat as a calibration starting point, not an exact figure for any single carrier.",
+  "aircraft": [
+    {
+      "type": "A320-200",
+      "manufacturer": "Airbus",
+      "seats": {
+        "business": 12,
+        "economy": 138,
+        "total": 150
+      },
+      "range_km": 6150,
+      "cruise_fuel_burn_kg_per_hour": 2400,
+      "cruise_speed_kmh": 828,
+      "casm_usd": 0.075
+    },
+    {
+      "type": "A321neo",
+      "manufacturer": "Airbus",
+      "seats": {
+        "business": 16,
+        "economy": 184,
+        "total": 200
+      },
+      "range_km": 7400,
+      "cruise_fuel_burn_kg_per_hour": 2800,
+      "cruise_speed_kmh": 828,
+      "casm_usd": 0.065
+    },
+    {
+      "type": "B787-9",
+      "manufacturer": "Boeing",
+      "seats": {
+        "business": 42,
+        "premium_economy": 28,
+        "economy": 166,
+        "total": 236
+      },
+      "range_km": 14140,
+      "cruise_fuel_burn_kg_per_hour": 5400,
+      "cruise_speed_kmh": 903,
+      "casm_usd": 0.055
+    }
+  ]
+}
