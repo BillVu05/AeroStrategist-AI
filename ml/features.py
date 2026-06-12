@@ -91,13 +91,22 @@ class ReferenceData:
             row = country_macro.sort_values("year").iloc[[-1]]
         return row.iloc[0]
 
-    def build_features(self, destination: str, year: int, month: int, avg_fare_usd: float | None = None) -> dict:
+    def build_features(
+        self,
+        destination: str,
+        year: int,
+        month: int,
+        avg_fare_usd: float | None = None,
+        tourism_arrivals_multiplier: float = 1.0,
+        extra_competitors: list[dict] | None = None,
+    ) -> dict:
         route = self.route(destination)
         macro_row = self._macro_row(destination, year)
 
         comp = self.competitors[self.competitors["destination"] == destination]
-        competitor_count = len(comp)
-        competitor_avg_fare = float(comp["avg_fare_usd"].mean()) if not comp.empty else 0.0
+        fares = list(comp["avg_fare_usd"]) + [c["price"] for c in (extra_competitors or [])]
+        competitor_count = len(fares)
+        competitor_avg_fare = float(sum(fares) / len(fares)) if fares else 0.0
 
         if avg_fare_usd is None:
             avg_fare_usd = self.default_avg_fare(destination)
@@ -107,7 +116,7 @@ class ReferenceData:
             "gdp_usd": float(macro_row["gdp_usd"]),
             "gdp_growth_pct": float(macro_row["gdp_growth_pct"]),
             "population": float(macro_row["population"]),
-            "tourism_arrivals_baseline": float(route["market"]["tourism_arrivals"]),
+            "tourism_arrivals_baseline": float(route["market"]["tourism_arrivals"]) * tourism_arrivals_multiplier,
             "competitor_count": competitor_count,
             "competitor_avg_fare_usd": competitor_avg_fare,
             "avg_fare_usd": float(avg_fare_usd),

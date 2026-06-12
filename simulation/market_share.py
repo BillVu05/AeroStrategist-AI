@@ -44,6 +44,7 @@ class MarketShareModel:
         own_price: float,
         own_frequency: float,
         own_rating: float = PACIFIC_WINGS_RATING,
+        extra_competitors: list[dict] | None = None,
     ) -> dict:
         comp = self.competitors[self.competitors["destination"] == destination]
 
@@ -62,6 +63,15 @@ class MarketShareModel:
                     "price": row.avg_fare_usd,
                     "weekly_frequency": row.weekly_frequency,
                     "rating": row.rating,
+                }
+            )
+        for extra in extra_competitors or []:
+            carriers.append(
+                {
+                    "name": extra["name"],
+                    "price": extra["price"],
+                    "weekly_frequency": extra["weekly_frequency"],
+                    "rating": extra["rating"],
                 }
             )
 

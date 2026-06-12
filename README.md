@@ -26,8 +26,15 @@ pip install -r requirements.txt
 
 Copy `.env.example` to `.env` and fill in your own `GEMINI_API_KEY` (free, no
 billing - get one at https://aistudio.google.com/apikey). `.env` is
-git-ignored, so each user keeps their own key locally. Without a key, the app
-still runs - LLM narration sections just return `"available": false`.
+git-ignored and never committed, so each user's key stays local to their own
+machine - cloning this repo does not give you access to anyone else's key.
+
+**A Gemini key is entirely optional.** Every endpoint works without one,
+including `/copilot`: the simulation results (`scenario`, `demand`, `finance`
+- all real numbers from the Phase 3-7 model/engine, no LLM involved) are
+always returned. Only the `market`, `risk`, and `strategy` sections of
+`/copilot` depend on Gemini; without a key they return
+`{"available": false, ...}` with an explanatory notice instead of narration.
 
 ## ETL pipeline
 
@@ -146,6 +153,66 @@ market/risk/strategy commentary; without it, those sections return
 (simulation results) are returned as normal. Optionally override the model
 via `GEMINI_MODEL` (defaults to `gemini-2.5-flash`).
 
+## Frontend dashboard (Phase 11)
+
+A Next.js (App Router, TypeScript, Tailwind, Recharts, React-Leaflet) dashboard
+in `frontend/` provides four views:
+
+- **Executive Dashboard** (`/`) - current-month profit, load factor, and
+  market share for each active route, plus a profit-by-route chart.
+- **Route Explorer** (`/routes`) - a Leaflet/OpenStreetMap map of SYD and its
+  routes (including the SYD-DAD candidate route), with a details panel
+  showing distance, frequency, fleet, and market stats for the selected route.
+- **Scenario Simulator** (`/simulator`) - run manual what-if deltas or named
+  presets (from `/what_if_presets`) and compare baseline vs. scenario via
+  tables, bar charts, and market-share pie charts.
+- **AI Strategy Assistant** (`/copilot`) - same scenario inputs, calling
+  `/copilot` for demand/finance deltas plus market/risk/strategy commentary
+  (or graceful "unavailable" notices without `GEMINI_API_KEY`).
+
+Run the backend and frontend in separate terminals:
+
+```bash
+uvicorn api.main:app --reload
+```
+
+```bash
+cd frontend
+npm install
+cp .env.local.example .env.local
+npm run dev
+```
+
+Then open http://localhost:3000.
+
+## Deployment (Phase 12)
+
+The whole stack (PostgreSQL, FastAPI backend, Next.js frontend) can be run with
+Docker Compose - useful for a local/portfolio demo without installing Python
+or Node.
+
+```bash
+cp .env.example .env   # fill in GEMINI_API_KEY (optional - see above)
+docker compose up --build
+```
+
+This starts:
+
+- `db` - PostgreSQL on `localhost:5432` (used by the ETL/training scripts; the
+  API itself reads the pre-trained model and reference data baked into its
+  image, so it doesn't need `db` at runtime).
+- `api` - FastAPI backend on `localhost:8000`.
+- `frontend` - Next.js production build on `localhost:3000`.
+
+Open http://localhost:3000. The frontend image is built with
+`NEXT_PUBLIC_API_BASE_URL=http://localhost:8000` (overridable via the `args:`
+in `docker-compose.yml`).
+
+To retrain the demand model or reload the database from inside Docker, run
+the ETL scripts and `ml/train_demand_model.py` locally against `db` as
+described above, then `docker compose up --build api` to bake the updated
+`models/` into the API image.
+
 ## Project structure
 
 ```
@@ -191,4 +258,15 @@ etl/
 docs/
   cost_assumptions.md          Phases 4-6 cost/revenue/market-share methodology
   agent_architecture.md        Phases 8-9 agent/copilot methodology
+Dockerfile                   Phase 12: backend image (FastAPI + pre-trained model)
+docker-compose.yml            Phase 12: db + api + frontend services
+frontend/
+  Dockerfile                  Phase 12: frontend image (Next.js standalone build)
+  app/
+    page.tsx                    Executive Dashboard ("/")
+    routes/page.tsx             Route Explorer
+    simulator/page.tsx          Scenario Simulator
+    copilot/page.tsx            AI Strategy Assistant
+  components/                   Shared UI (nav, charts, map, scenario form, ...)
+  lib/                          API client, types, constants
 ```

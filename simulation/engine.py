@@ -55,6 +55,8 @@ class SimulationEngine:
         fuel_price_usd_per_gallon: float | None = None,
         aircraft_type: str | None = None,
         rating_delta: float = 0.0,
+        tourism_arrivals_multiplier: float = 1.0,
+        extra_competitors: list[dict] | None = None,
     ) -> dict:
         route = self.ref.route(destination)
 
@@ -68,7 +70,14 @@ class SimulationEngine:
 
         # Demand: driven by market features + own fare, independent of
         # Pacific Wings' own capacity choices.
-        features = self.ref.build_features(destination, year, month, scenario_fare)
+        features = self.ref.build_features(
+            destination,
+            year,
+            month,
+            scenario_fare,
+            tourism_arrivals_multiplier=tourism_arrivals_multiplier,
+            extra_competitors=extra_competitors,
+        )
         X = pd.DataFrame([features])[self._feature_columns]
         predicted_passengers = float(self._model.predict(X)[0])
 
@@ -94,6 +103,7 @@ class SimulationEngine:
             own_price=scenario_fare,
             own_frequency=scenario_frequency,
             own_rating=PACIFIC_WINGS_RATING + rating_delta,
+            extra_competitors=extra_competitors,
         )
 
         return {
@@ -107,6 +117,8 @@ class SimulationEngine:
                 "aircraft_type": scenario_aircraft,
                 "fuel_price_usd_per_gallon": cost["fuel_price_usd_per_gallon"],
                 "pacific_wings_rating": round(PACIFIC_WINGS_RATING + rating_delta, 2),
+                "tourism_arrivals_multiplier": tourism_arrivals_multiplier,
+                "extra_competitors": extra_competitors or [],
             },
             "demand": {
                 "predicted_demand_passengers": round(predicted_passengers),

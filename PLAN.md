@@ -149,7 +149,42 @@ Done:
     degradation when `GEMINI_API_KEY` is unset (LLM sections report `"available": false` with a notice,
     simulation numbers unaffected). See `docs/agent_architecture.md`.
 
+13. Phase 10: `simulation/presets.py` (`fuel_price_shock`, `tourism_boom`, `competitor_entry` - thin wrappers
+    deriving scenario kwargs from route reference data), extended `ml/features.py` (`tourism_arrivals_multiplier`,
+    `extra_competitors`), `simulation/market_share.py` (`extra_competitors`), and `simulation/engine.py` to
+    thread both levers through `run_scenario`/`compare`. `api/main.py` `/what_if_presets` (lists presets) and
+    `preset=` param on `/what_if` and `/copilot` - verified end-to-end: `fuel_price_shock` swings SIN profit
+    from -$142.8k to -$290.2k, `competitor_entry` drops Pacific Wings' SIN market share from 22.8% to 17.6%.
+    Note: `tourism_boom` is wired correctly but has near-zero effect on existing routes (SIN/NRT/MEL/AKL) -
+    the demand model's tree splits on `tourism_arrivals_baseline` happen to fall between routes' fixed
+    training values, so a +/-20% perturbation within one route mostly doesn't cross a split boundary. Only
+    DAD (candidate route) shows a measurable effect (~104 passengers). This is an inherent limitation of
+    training on one tourism value per route, not a bug in the preset.
+
+14. Phase 11: `frontend/` - Next.js (App Router, TypeScript, Tailwind, Recharts, React-Leaflet@5) dashboard with
+    four pages: Executive Dashboard (`/`, route cards + profit-by-route chart from `/what_if` baselines),
+    Route Explorer (`/routes`, Leaflet/OpenStreetMap map of SYD + 5 routes incl. SYD-DAD candidate, backed by a
+    new `api/main.py` `GET /routes` endpoint merging `airline_profile.json` with `airports.csv` coordinates,
+    plus a details panel), Scenario Simulator (`/simulator`, shared `ScenarioForm` for manual deltas or named
+    presets, `ComparisonCards`/`ComparisonCharts`/`MarketShareChart` for baseline-vs-scenario), and AI Strategy
+    Assistant (`/copilot`, same form, renders demand/finance deltas plus market/risk/strategy report sections
+    with graceful "unavailable" notices when `GEMINI_API_KEY` is unset). Backend updated with `CORSMiddleware`
+    (`allow_origins=["http://localhost:3000"]`). Verified end-to-end: `npx tsc --noEmit` and `npm run build`
+    clean, all 4 pages exercised in a browser (incl. running a manual scenario, a preset, and the AI assistant)
+    against a live backend with zero console errors. Fixed a bug found during verification where selecting a
+    preset left stale manual-delta values (e.g. a prior price change) in form state, which were then sent to
+    `/what_if` alongside the preset and silently contaminated the result - `ScenarioForm` now clears manual
+    deltas when a preset is selected.
+
+15. Phase 12: `Dockerfile` (backend - copies pre-trained model + reference/profile data, runs
+    `uvicorn api.main:app`), `frontend/Dockerfile` (multi-stage Next.js standalone build,
+    `next.config.ts` `output: "standalone"`), `.dockerignore` files, and `docker-compose.yml`
+    extended with `api` (port 8000) and `frontend` (port 3000) services alongside the existing
+    `db` service. Verified end-to-end: `docker compose up --build` builds both images, all three
+    containers start, `/health`, `/what_if_presets`, and `/what_if` respond correctly from `api`,
+    and both `/` and `/simulator` return 200 from `frontend`. `db` remains used for ETL/training
+    only - the API reads its baked-in model/data and doesn't need it at runtime.
+
 Next:
-- Phase 10: What-if analysis presets (fuel +30%, competitor entry, tourism boom) as thin wrappers over Phase 7
-- Phase 11: Next.js dashboard (Executive Dashboard, Route Explorer, Scenario Simulator, AI Strategy Assistant chat)
-- Phase 12: Deployment (FastAPI + PostgreSQL + Docker Compose)
+- All 12 phases complete. Possible stretch goals: AWS/Prometheus/Grafana (noted as optional in
+  the original plan, not required for the portfolio demo).

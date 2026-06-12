@@ -5,6 +5,7 @@ Run:
     uvicorn api.main:app --reload
 """
 
+import csv
 import json
 import sys
 from pathlib import Path
@@ -12,6 +13,7 @@ from pathlib import Path
 import pandas as pd
 import xgboost as xgb
 from fastapi import FastAPI, HTTPException, Query
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -24,12 +26,20 @@ from features import ReferenceData  # noqa: E402
 from cost import CostModel  # noqa: E402
 from revenue import RevenueModel  # noqa: E402
 from engine import SimulationEngine  # noqa: E402
+from presets import list_presets, preset_kwargs  # noqa: E402
 from copilot import run_copilot  # noqa: E402
 
 app = FastAPI(
     title="Airline Strategy Simulator API",
     description="Pacific Wings demand forecasting and simulation API",
     version="0.1.0",
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000"],
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 _model = xgb.XGBRegressor()
@@ -39,6 +49,10 @@ _ref = ReferenceData()
 _cost_model = CostModel()
 _revenue_model = RevenueModel()
 _engine = SimulationEngine()
+
+_airline_profile = json.loads((ROOT / "data" / "airline_profile.json").read_text())
+with open(ROOT / "data" / "reference" / "airports.csv", newline="") as f:
+    _airports = {row["iata"]: row for row in csv.DictReader(f)}
 
 
 class DemandForecastResponse(BaseModel):
@@ -131,6 +145,12 @@ def route_economics(
     }
 
 
+@app.get("/what_if_presets")
+def what_if_presets():
+    """Phase 10: lists the named what-if presets available to /what_if."""
+    return list_presets()
+
+
 @app.get("/what_if")
 def what_if(
     destination: str,
@@ -141,26 +161,37 @@ def what_if(
     fuel_price_usd_per_gallon: float | None = None,
     aircraft_type: str | None = None,
     rating_delta: float = 0.0,
+    preset: str | None = None,
 ):
     """
     Phase 7 simulation engine: compares a baseline (current operations) against
     a scenario with the given deltas, covering demand, revenue, cost, profit,
     and market share.
+
+    Phase 10: pass `preset` (see /what_if_presets) to apply a named scenario
+    (e.g. "fuel_price_shock", "tourism_boom", "competitor_entry") instead of,
+    or alongside, the manual deltas above. Preset values take precedence over
+    manual deltas for any overlapping parameter.
     """
     destination = destination.upper()
+    scenario_kwargs = {
+        "price_delta_pct": price_delta_pct,
+        "frequency_delta": frequency_delta,
+        "fuel_price_usd_per_gallon": fuel_price_usd_per_gallon,
+        "aircraft_type": aircraft_type,
+        "rating_delta": rating_delta,
+    }
+
     try:
-        return _engine.compare(
-            destination,
-            year,
-            month,
-            price_delta_pct=price_delta_pct,
-            frequency_delta=frequency_delta,
-            fuel_price_usd_per_gallon=fuel_price_usd_per_gallon,
-            aircraft_type=aircraft_type,
-            rating_delta=rating_delta,
-        )
+        if preset is not None:
+            scenario_kwargs.update(preset_kwargs(_engine, preset, destination))
+        result = _engine.compare(destination, year, month, **scenario_kwargs)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
+
+    if preset is not None:
+        result["preset"] = {"name": preset, **list_presets()[preset]}
+    return result
 
 
 @app.get("/copilot")
@@ -173,6 +204,7 @@ def copilot(
     fuel_price_usd_per_gallon: float | None = None,
     aircraft_type: str | None = None,
     rating_delta: float = 0.0,
+    preset: str | None = None,
 ):
     """
     Phase 8-9: runs the LangGraph agent pipeline (Market, Demand, Finance,
@@ -180,21 +212,63 @@ def copilot(
     and returns an executive summary. Demand/finance figures come directly
     from the simulation engine; market/risk/strategy commentary comes from
     Claude and degrades to a notice if ANTHROPIC_API_KEY is not set.
+
+    Phase 10: pass `preset` (see /what_if_presets) to run the agents over a
+    named what-if scenario instead of, or alongside, the manual deltas above.
     """
     destination = destination.upper()
+    scenario_kwargs = {
+        "price_delta_pct": price_delta_pct,
+        "frequency_delta": frequency_delta,
+        "fuel_price_usd_per_gallon": fuel_price_usd_per_gallon,
+        "aircraft_type": aircraft_type,
+        "rating_delta": rating_delta,
+    }
     try:
-        return run_copilot(
-            destination,
-            year,
-            month,
-            price_delta_pct=price_delta_pct,
-            frequency_delta=frequency_delta,
-            fuel_price_usd_per_gallon=fuel_price_usd_per_gallon,
-            aircraft_type=aircraft_type,
-            rating_delta=rating_delta,
-        )
+        if preset is not None:
+            scenario_kwargs.update(preset_kwargs(_engine, preset, destination))
+        return run_copilot(destination, year, month, **scenario_kwargs)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
+
+
+@app.get("/routes")
+def routes():
+    """Phase 11: merges airline_profile.json routes with airport coordinates for the Route Explorer map."""
+    origin_iata = _airline_profile["airline"]["base"]
+    origin_airport = _airports[origin_iata]
+
+    route_list = []
+    for route in _airline_profile["routes"]:
+        airport = _airports[route["destination"]]
+        route_list.append(
+            {
+                "destination": route["destination"],
+                "destination_name": route["destination_name"],
+                "destination_city": route["destination_city"],
+                "destination_country": route["destination_country"],
+                "lat": float(airport["lat"]),
+                "lon": float(airport["lon"]),
+                "distance_km": route["distance_km"],
+                "status": route["status"],
+                "weekly_frequency": route["weekly_frequency"],
+                "assigned_aircraft": route["assigned_aircraft"],
+                "flight_duration_hours": route["flight_duration_hours"],
+                "market": route["market"],
+            }
+        )
+
+    return {
+        "origin": {
+            "iata": origin_iata,
+            "name": origin_airport["name"],
+            "city": origin_airport["city"],
+            "country": origin_airport["country"],
+            "lat": float(origin_airport["lat"]),
+            "lon": float(origin_airport["lon"]),
+        },
+        "routes": route_list,
+    }
 
 
 @app.get("/health")
