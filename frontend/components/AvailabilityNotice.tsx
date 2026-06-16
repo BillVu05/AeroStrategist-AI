@@ -1,6 +1,6 @@
 export default function AvailabilityNotice({ text }: { text: string }) {
   return (
-    <div className="rounded border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 whitespace-pre-wrap">
+    <div className="rounded-lg border border-secondary/30 bg-secondary-container/20 px-4 py-3 text-sm text-secondary whitespace-pre-wrap">
       {text}
     </div>
   );

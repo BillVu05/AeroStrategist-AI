@@ -28,6 +28,9 @@ from revenue import RevenueModel  # noqa: E402
 from engine import SimulationEngine  # noqa: E402
 from presets import list_presets, preset_kwargs  # noqa: E402
 from copilot import run_copilot  # noqa: E402
+from context import market_context  # noqa: E402
+from llm_client import get_client  # noqa: E402
+from chat_agent import chat as run_chat  # noqa: E402
 
 app = FastAPI(
     title="Airline Strategy Simulator API",
@@ -53,6 +56,15 @@ _engine = SimulationEngine()
 _airline_profile = json.loads((ROOT / "data" / "airline_profile.json").read_text())
 with open(ROOT / "data" / "reference" / "airports.csv", newline="") as f:
     _airports = {row["iata"]: row for row in csv.DictReader(f)}
+
+
+class ChatMessage(BaseModel):
+    role: str
+    content: str
+
+
+class ChatRequest(BaseModel):
+    messages: list[ChatMessage]
 
 
 class DemandForecastResponse(BaseModel):
@@ -232,6 +244,16 @@ def copilot(
         raise HTTPException(status_code=404, detail=str(exc))
 
 
+@app.post("/chat")
+def chat(req: ChatRequest):
+    """
+    Conversational AI executive team: a single Gemini conversation with
+    function-calling tools (agents/chat_agent.py) over the simulation engine
+    and market context. Degrades to a notice if GEMINI_API_KEY is not set.
+    """
+    return run_chat([m.model_dump() for m in req.messages])
+
+
 @app.get("/routes")
 def routes():
     """Phase 11: merges airline_profile.json routes with airport coordinates for the Route Explorer map."""
@@ -271,6 +293,18 @@ def routes():
     }
 
 
+@app.get("/market_context")
+def market_context_endpoint(destination: str, year: int = 2024):
+    """Real macro (GDP, population, tourism) and calibrated-synthetic
+    competitor data for a destination's market - the same data the chat
+    agent's `get_market_context` tool uses, exposed for the frontend."""
+    destination = destination.upper()
+    try:
+        return market_context(destination, year)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+
+
 @app.get("/health")
 def health():
-    return {"status": "ok"}
+    return {"status": "ok", "llm_available": get_client() is not None}

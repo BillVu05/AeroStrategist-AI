@@ -23,44 +23,46 @@ interface RouteMapProps {
 
 export default function RouteMap({ origin, routes, selected, onSelect }: RouteMapProps) {
   return (
-    <MapContainer
-      center={[origin.lat, origin.lon]}
-      zoom={4}
-      style={{ height: "500px", width: "100%" }}
-    >
-      <TileLayer
-        url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-        attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-      />
-      <Marker position={[origin.lat, origin.lon]}>
-        <Popup>
-          {origin.name} ({origin.iata}) — base
-        </Popup>
-      </Marker>
-      {routes.map((route) => (
-        <React.Fragment key={route.destination}>
-          <Marker
-            position={[route.lat, route.lon]}
-            eventHandlers={{ click: () => onSelect(route.destination) }}
-          >
-            <Popup>
-              {route.destination_name} ({route.destination})
-            </Popup>
-          </Marker>
-          <Polyline
-            positions={[
-              [origin.lat, origin.lon],
-              [route.lat, route.lon],
-            ]}
-            pathOptions={{
-              color: route.status === "active" ? "#2563eb" : "#9ca3af",
-              dashArray: route.status === "candidate" ? "6 4" : undefined,
-              weight: selected === route.destination ? 4 : 2,
-            }}
-            eventHandlers={{ click: () => onSelect(route.destination) }}
-          />
-        </React.Fragment>
-      ))}
-    </MapContainer>
+    <div className="glass-panel rounded-lg overflow-hidden">
+      <MapContainer
+        center={[origin.lat, origin.lon]}
+        zoom={4}
+        style={{ height: "500px", width: "100%" }}
+      >
+        <TileLayer
+          url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
+          attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>'
+        />
+        <Marker position={[origin.lat, origin.lon]}>
+          <Popup>
+            {origin.name} ({origin.iata}) — base
+          </Popup>
+        </Marker>
+        {routes.map((route) => (
+          <React.Fragment key={route.destination}>
+            <Marker
+              position={[route.lat, route.lon]}
+              eventHandlers={{ click: () => onSelect(route.destination) }}
+            >
+              <Popup>
+                {route.destination_name} ({route.destination})
+              </Popup>
+            </Marker>
+            <Polyline
+              positions={[
+                [origin.lat, origin.lon],
+                [route.lat, route.lon],
+              ]}
+              pathOptions={{
+                color: route.status === "active" ? "#4cd7f6" : "#909096",
+                dashArray: route.status === "candidate" ? "6 4" : undefined,
+                weight: selected === route.destination ? 4 : 2,
+              }}
+              eventHandlers={{ click: () => onSelect(route.destination) }}
+            />
+          </React.Fragment>
+        ))}
+      </MapContainer>
+    </div>
   );
 }

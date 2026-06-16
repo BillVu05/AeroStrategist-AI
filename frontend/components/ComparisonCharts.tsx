@@ -37,17 +37,28 @@ export default function ComparisonCharts({ baseline, scenario }: ComparisonChart
   ];
 
   return (
-    <div className="rounded border border-gray-200 bg-white p-4">
-      <h3 className="mb-2 text-sm font-semibold text-gray-900">Revenue, cost &amp; profit (USD)</h3>
+    <div className="glass-panel rounded-lg p-4">
+      <h3 className="mb-2 font-label text-xs uppercase tracking-widest text-primary">
+        Revenue, cost &amp; profit (USD)
+      </h3>
       <ResponsiveContainer width="100%" height={300}>
         <BarChart data={data}>
-          <CartesianGrid strokeDasharray="3 3" />
-          <XAxis dataKey="metric" />
-          <YAxis tickFormatter={(value: number) => `$${(value / 1000).toFixed(0)}k`} />
-          <Tooltip formatter={(value) => `$${Number(value).toLocaleString()}`} />
-          <Legend />
-          <Bar dataKey="Baseline" fill="#9ca3af" />
-          <Bar dataKey="Scenario" fill="#2563eb" />
+          <CartesianGrid stroke="rgba(255,255,255,0.05)" strokeDasharray="3 3" />
+          <XAxis dataKey="metric" stroke="#c6c6cc" tick={{ fill: "#c6c6cc" }} />
+          <YAxis
+            stroke="#c6c6cc"
+            tick={{ fill: "#c6c6cc" }}
+            tickFormatter={(value: number) => `$${(value / 1000).toFixed(0)}k`}
+          />
+          <Tooltip
+            formatter={(value) => `$${Number(value).toLocaleString()}`}
+            contentStyle={{ background: "#1e2020", border: "1px solid rgba(255,255,255,0.1)" }}
+            labelStyle={{ color: "#e2e2e2" }}
+            itemStyle={{ color: "#e2e2e2" }}
+          />
+          <Legend wrapperStyle={{ color: "#c6c6cc" }} />
+          <Bar dataKey="Baseline" fill="#909096" />
+          <Bar dataKey="Scenario" fill="#4cd7f6" />
         </BarChart>
       </ResponsiveContainer>
     </div>

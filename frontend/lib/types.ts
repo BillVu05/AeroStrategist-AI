@@ -103,47 +103,6 @@ export interface WhatIfResponse {
   preset?: { name: string; label: string; description: string };
 }
 
-// Copilot — `commentary`/`risks`/`executive_summary` are always populated:
-// real text when `available` is true, the "set GEMINI_API_KEY..." notice
-// when false. `available` is only a styling flag.
-export interface CopilotMarketAnalysis {
-  available: boolean;
-  commentary: string;
-  context: Record<string, unknown>;
-}
-
-export interface CopilotRiskAnalysis {
-  available: boolean;
-  risks: string;
-}
-
-export interface CopilotStrategy {
-  available: boolean;
-  executive_summary: string;
-}
-
-export interface CopilotResponse {
-  origin: string;
-  destination: string;
-  year: number;
-  month: number;
-  scenario: ScenarioParams;
-  demand: {
-    baseline: ScenarioDemand;
-    scenario: ScenarioDemand;
-    delta: { passengers_carried: number; load_factor: number };
-    demand_constrained_by_capacity: boolean;
-  };
-  finance: {
-    baseline: { revenue_usd: number; cost_usd: number; profit_usd: number };
-    scenario: { revenue_usd: number; cost_usd: number; profit_usd: number };
-    delta: { profit_usd: number; revenue_usd: number; cost_usd: number };
-  };
-  market_analysis: CopilotMarketAnalysis;
-  risk_analysis: CopilotRiskAnalysis;
-  strategy: CopilotStrategy;
-}
-
 // /routes
 export interface RouteMarket {
   gdp_usd: number;
@@ -182,7 +141,86 @@ export interface RoutesResponse {
   routes: RouteInfo[];
 }
 
-// Shared form state for the Scenario Simulator and AI Strategy Assistant.
+// /chat
+export interface ChatMessage {
+  role: "user" | "model";
+  content: string;
+}
+
+export interface ChatToolCall {
+  name: string;
+  args: Record<string, unknown>;
+  result: Record<string, unknown>;
+}
+
+export interface ChatResponse {
+  available: boolean;
+  reply: string;
+  tool_calls: ChatToolCall[];
+}
+
+// /market_context
+export interface Competitor {
+  name: string;
+  weekly_frequency: number;
+  avg_fare_usd: number;
+  rating: number;
+}
+
+export interface MarketContext {
+  origin: string;
+  destination: string;
+  destination_city: string;
+  destination_country: string;
+  distance_km: number;
+  flight_duration_hours: number;
+  current_weekly_frequency: number;
+  assigned_aircraft: string;
+  macro_year: number;
+  gdp_usd: number;
+  gdp_growth_pct: number;
+  population: number;
+  tourism_arrivals_baseline: number;
+  tourism_arrivals_snapshot_year: number;
+  competitors: Competitor[];
+}
+
+// /copilot
+export interface CopilotFinanceRow {
+  revenue_usd: number;
+  cost_usd: number;
+  profit_usd: number;
+}
+
+export interface CopilotResponse {
+  origin: string;
+  destination: string;
+  year: number;
+  month: number;
+  scenario: ScenarioParams;
+  demand: {
+    baseline: ScenarioDemand;
+    scenario: ScenarioDemand;
+    delta: { passengers_carried: number; load_factor: number };
+    demand_constrained_by_capacity: boolean;
+  };
+  finance: {
+    baseline: CopilotFinanceRow;
+    scenario: CopilotFinanceRow;
+    delta: { profit_usd: number; revenue_usd: number; cost_usd: number };
+  };
+  market_analysis: { available: boolean; commentary: string; context: MarketContext };
+  risk_analysis: { available: boolean; risks: string };
+  strategy: { available: boolean; executive_summary: string };
+}
+
+// /health
+export interface HealthResponse {
+  status: string;
+  llm_available: boolean;
+}
+
+// Shared form state for the Scenario Simulator.
 export interface ScenarioInput {
   destination: string;
   year: number;

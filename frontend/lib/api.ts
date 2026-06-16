@@ -1,6 +1,10 @@
 import type {
+  ChatMessage,
+  ChatResponse,
   CopilotResponse,
   DemandForecastResponse,
+  HealthResponse,
+  MarketContext,
   RouteEconomicsResponse,
   RoutesResponse,
   ScenarioInput,
@@ -29,7 +33,11 @@ async function getJSON<T>(path: string, params?: Record<string, unknown>): Promi
 }
 
 export function getHealth() {
-  return getJSON<{ status: string }>("/health");
+  return getJSON<HealthResponse>("/health");
+}
+
+export function getMarketContext(destination: string, year: number = 2024) {
+  return getJSON<MarketContext>("/market_context", { destination, year });
 }
 
 export function getDemandForecast(params: {
@@ -61,10 +69,23 @@ export function getWhatIf(params: ScenarioInput) {
   return getJSON<WhatIfResponse>("/what_if", params);
 }
 
+export function getRoutes() {
+  return getJSON<RoutesResponse>("/routes");
+}
+
 export function getCopilot(params: ScenarioInput) {
   return getJSON<CopilotResponse>("/copilot", params);
 }
 
-export function getRoutes() {
-  return getJSON<RoutesResponse>("/routes");
+export async function postChat(messages: ChatMessage[]) {
+  const res = await fetch(new URL("/chat", BASE_URL), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ messages }),
+  });
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`API error ${res.status} for /chat: ${body}`);
+  }
+  return res.json() as Promise<ChatResponse>;
 }

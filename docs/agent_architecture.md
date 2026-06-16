@@ -80,3 +80,31 @@ availability.
 
 Default model: `gemini-2.5-flash` (overridable via the `GEMINI_MODEL` env
 var).
+
+## Chat agent (`agents/chat_agent.py`, `/chat` endpoint)
+
+A separate, conversational alternative to the `/copilot` pipeline above,
+powering the AI Strategy Assistant chat UI (`frontend/app/copilot/page.tsx`).
+Instead of a fixed sequential pipeline with three separate Gemini calls, this
+is a single Gemini conversation per turn using **automatic function calling**:
+Gemini is given Python functions as tools and decides for itself which to
+call, with what arguments, and how many times, before writing one unified
+reply.
+
+Tools exposed to the model:
+
+| Tool | Wraps | Purpose |
+|---|---|---|
+| `list_routes` | `ml/features.py` `ReferenceData.routes_by_destination` | Resolve city/country names to IATA codes; check active vs. candidate routes |
+| `list_what_if_presets` | `simulation/presets.py` | Discover named scenario presets |
+| `simulate_route` | `SimulationEngine.compare()` | Baseline-vs-scenario demand/revenue/cost/profit/market-share for a route, given fare/frequency/fuel/aircraft/rating changes or a preset. Also accepts `fuel_price_delta_pct` (e.g. "fuel prices rise 25%"), converted internally via `simulation/cost.py:latest_fuel_price()` |
+| `get_market_context` | `agents/context.py` | Real macro/tourism/competitor data for qualitative commentary |
+
+The system prompt enforces the same "numbers vs. narration" rule as the rest
+of this document: any quantitative claim must come from a tool call, and the
+model cites those figures exactly. `agents/chat_agent.py:chat()` returns the
+reply text plus a `tool_calls` trace (`{"name", "args", "result"}`) so the UI
+can render simulation deltas alongside the conversational answer. Like the
+other LLM agents, it degrades to `UNAVAILABLE_NOTICE` if `GEMINI_API_KEY` is
+not set or the API call fails - this is independent of, and does not modify,
+the `/copilot` 5-agent pipeline.

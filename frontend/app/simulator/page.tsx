@@ -42,7 +42,7 @@ export default function ScenarioSimulatorPage() {
 
   return (
     <div>
-      <h1 className="mb-4 text-2xl font-semibold text-gray-900">Scenario Simulator</h1>
+      <h1 className="mb-4 text-2xl font-semibold text-on-surface">Scenario Simulator</h1>
 
       <ScenarioForm
         value={input}
@@ -62,7 +62,7 @@ export default function ScenarioSimulatorPage() {
       {result && (
         <div className="mt-4 space-y-4">
           {result.preset && (
-            <div className="rounded border border-blue-200 bg-blue-50 p-3 text-sm text-blue-800">
+            <div className="rounded-lg border border-tertiary/20 bg-tertiary/10 p-3 text-sm text-tertiary">
               <span className="font-medium">{result.preset.label}</span> — {result.preset.description}
             </div>
           )}

@@ -15,9 +15,9 @@ function fmtPct(value: number) {
 }
 
 function deltaClass(value: number) {
-  if (value > 0) return "text-green-600";
-  if (value < 0) return "text-red-600";
-  return "text-gray-500";
+  if (value > 0) return "text-tertiary";
+  if (value < 0) return "text-error";
+  return "text-on-surface-variant";
 }
 
 function signed(value: string, raw: number) {
@@ -75,10 +75,10 @@ export default function ComparisonCards({ baseline, scenario, delta }: Compariso
   ];
 
   return (
-    <div className="overflow-x-auto rounded border border-gray-200 bg-white">
+    <div className="glass-panel overflow-x-auto rounded-lg">
       <table className="w-full text-sm">
         <thead>
-          <tr className="border-b border-gray-200 text-left text-gray-500">
+          <tr className="border-b border-white/10 text-left font-label text-[10px] uppercase tracking-widest text-on-surface-variant">
             <th className="p-3">Metric</th>
             <th className="p-3 text-right">Baseline</th>
             <th className="p-3 text-right">Scenario</th>
@@ -87,10 +87,10 @@ export default function ComparisonCards({ baseline, scenario, delta }: Compariso
         </thead>
         <tbody>
           {rows.map((row) => (
-            <tr key={row.label} className="border-b border-gray-100 last:border-0">
-              <td className="p-3 text-gray-700">{row.label}</td>
-              <td className="p-3 text-right font-medium">{row.baseline}</td>
-              <td className="p-3 text-right font-medium">{row.scenario}</td>
+            <tr key={row.label} className="border-b border-white/5 last:border-0 hover:bg-white/5 transition-colors">
+              <td className="p-3 text-on-surface-variant">{row.label}</td>
+              <td className="p-3 text-right font-medium text-on-surface">{row.baseline}</td>
+              <td className="p-3 text-right font-medium text-on-surface">{row.scenario}</td>
               <td className={`p-3 text-right font-medium ${deltaClass(row.deltaRaw)}`}>{row.delta}</td>
             </tr>
           ))}
