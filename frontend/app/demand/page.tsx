@@ -99,6 +99,8 @@ export default function DemandForecastingPage() {
           return {
             route,
             monthlyDemand: current.predicted_passengers,
+            monthlyDemandLow: current.predicted_passengers_low,
+            monthlyDemandHigh: current.predicted_passengers_high,
             avgFareUsd: current.avg_fare_usd,
             loadFactor: current.predicted_load_factor,
             yoyGrowthPct,

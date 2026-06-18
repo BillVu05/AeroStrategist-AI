@@ -7,11 +7,28 @@ interpreted honestly.
 
 ## Cost model
 
-### Fuel vs. non-fuel split of CASM
+### Real anchor for non-fuel CASM (Phase 4, real-data rebuild)
 
 `data/aircraft_specs.json` provides `casm_usd` (cost per available-seat-km,
-USD) per aircraft type - an industry-typical *total* unit cost figure
-(published CAPA/IATA-style economic analyses).
+USD) per aircraft type - the *total* unit cost at the $1.74/gal baseline
+(see below). Its non-fuel component is anchored to Qantas Group's FY25
+disclosed ex-fuel unit cost (6.22 AUD cents/ASK; FY24 was 5.97) - the only
+clean public CASK figure found for any carrier relevant to this network
+(Air New Zealand and Singapore Airlines didn't yield one). This is
+explicitly a **group blend** across Qantas mainline + Jetstar and all
+stage lengths, not a per-aircraft or per-route figure.
+
+Converted to USD at the same ~0.65 USD/AUD rate used for Phase 2's
+competitor fare conversions: `6.22 AUD cents x 0.65 / 100 = $0.0404/ASK`.
+Each aircraft's prior non-fuel CASM was then scaled by a single factor
+(`0.0404 / network ASK-weighted average of the prior values = 0.7884`) so
+the Pacific Wings network average lands exactly on that real anchor, while
+preserving the prior relative shape across aircraft types (smaller/
+shorter-stage aircraft cost more per seat-km - consistent with the real-
+world economics of stage length, even though the absolute level was
+previously an unanchored industry-typical guess).
+
+### Fuel vs. non-fuel split of CASM
 
 To make fuel a controllable "what-if" variable (e.g. "fuel +30%"), CASM is
 split into:
@@ -40,9 +57,9 @@ At the $1.74/gal baseline this gives a fuel share of CASM of roughly:
 
 | Aircraft | baseline_fuel_casm | casm_usd | fuel share |
 |---|---|---|---|
-| A320-200 | ~0.0111 | 0.075 | ~15% |
-| A321neo | ~0.0097 | 0.065 | ~15% |
-| B787-9 | ~0.0146 | 0.055 | ~26% |
+| A320-200 | ~0.0111 | 0.0615 | ~18% |
+| A321neo | ~0.0097 | 0.0533 | ~18% |
+| B787-9 | ~0.0146 | 0.0464 | ~31% |
 
 These are broadly consistent with published industry breakdowns where fuel
 is typically 15-30% of operating cost depending on aircraft type and fuel

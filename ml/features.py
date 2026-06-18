@@ -99,6 +99,9 @@ class ReferenceData:
         avg_fare_usd: float | None = None,
         tourism_arrivals_multiplier: float = 1.0,
         extra_competitors: list[dict] | None = None,
+        gdp_usd_override: float | None = None,
+        gdp_growth_pct_override: float | None = None,
+        population_override: float | None = None,
     ) -> dict:
         route = self.route(destination)
         macro_row = self._macro_row(destination, year)
@@ -113,9 +116,9 @@ class ReferenceData:
 
         return {
             "distance_km": route["distance_km"],
-            "gdp_usd": float(macro_row["gdp_usd"]),
-            "gdp_growth_pct": float(macro_row["gdp_growth_pct"]),
-            "population": float(macro_row["population"]),
+            "gdp_usd": gdp_usd_override if gdp_usd_override is not None else float(macro_row["gdp_usd"]),
+            "gdp_growth_pct": gdp_growth_pct_override if gdp_growth_pct_override is not None else float(macro_row["gdp_growth_pct"]),
+            "population": population_override if population_override is not None else float(macro_row["population"]),
             "tourism_arrivals_baseline": float(route["market"]["tourism_arrivals"]) * tourism_arrivals_multiplier,
             "competitor_count": competitor_count,
             "competitor_avg_fare_usd": competitor_avg_fare,

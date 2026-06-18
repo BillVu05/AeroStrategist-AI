@@ -15,7 +15,8 @@ import requests
 OURAIRPORTS_URL = "https://davidmegginson.github.io/ourairports-data/airports.csv"
 
 # IATA codes for the airports used by Pacific Wings + candidate routes.
-RELEVANT_IATA = ["SYD", "SIN", "NRT", "MEL", "AKL", "DAD"]
+# HND (Haneda) not NRT (Narita) - matches real Sydney-Tokyo service today.
+RELEVANT_IATA = ["SYD", "SIN", "HND", "MEL", "AKL", "DAD"]
 
 OUTPUT_PATH = Path(__file__).resolve().parents[1] / "data" / "reference" / "airports.csv"
 

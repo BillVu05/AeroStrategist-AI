@@ -8,6 +8,7 @@ import ScenarioForm from "@/components/ScenarioForm";
 import ComparisonCards from "@/components/ComparisonCards";
 import ComparisonCharts from "@/components/ComparisonCharts";
 import MarketShareChart from "@/components/MarketShareChart";
+import MonteCarloPanel from "@/components/MonteCarloPanel";
 import ErrorMessage from "@/components/ErrorMessage";
 
 export default function ScenarioSimulatorPage() {
@@ -70,6 +71,7 @@ export default function ScenarioSimulatorPage() {
           <ComparisonCards baseline={result.baseline} scenario={result.scenario} delta={result.delta} />
           <ComparisonCharts baseline={result.baseline} scenario={result.scenario} />
           <MarketShareChart baseline={result.baseline.market_share} scenario={result.scenario.market_share} />
+          <MonteCarloPanel input={input} />
         </div>
       )}
     </div>

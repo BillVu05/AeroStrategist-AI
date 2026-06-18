@@ -14,7 +14,7 @@
         "range_km": 6150,
         "cruise_fuel_burn_kg_per_hour": 2400,
         "cruise_speed_kmh": 828,
-        "casm_usd": 0.075
+        "casm_usd": 0.0615
       },
       {
         "type": "A321neo",
@@ -27,7 +27,7 @@
         "range_km": 7400,
         "cruise_fuel_burn_kg_per_hour": 2800,
         "cruise_speed_kmh": 828,
-        "casm_usd": 0.065
+        "casm_usd": 0.0533
       },
       {
         "type": "B787-9",
@@ -41,7 +41,7 @@
         "range_km": 14140,
         "cruise_fuel_burn_kg_per_hour": 5400,
         "cruise_speed_kmh": 903,
-        "casm_usd": 0.055
+        "casm_usd": 0.0464
       }
     ]
   },
@@ -67,15 +67,15 @@
     },
     {
       "origin": "SYD",
-      "destination": "NRT",
-      "destination_name": "Narita International Airport",
-      "destination_city": "Narita",
+      "destination": "HND",
+      "destination_name": "Tokyo Haneda International Airport",
+      "destination_city": "Tokyo",
       "destination_country": "JP",
-      "distance_km": 7832.5,
+      "distance_km": 7817.8,
       "status": "active",
       "weekly_frequency": 5,
       "assigned_aircraft": "B787-9",
-      "flight_duration_hours": 8.67,
+      "flight_duration_hours": 8.66,
       "market": {
         "snapshot_year": 2019,
         "gdp_usd": 5117993853016.51,

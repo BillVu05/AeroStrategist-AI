@@ -1,13 +1,20 @@
 import type {
+  AnalyzeRouteResponse,
   ChatMessage,
   ChatResponse,
+  CompareRoutesResponse,
   CopilotResponse,
   DemandForecastResponse,
+  FutureAnalysisResponse,
   HealthResponse,
+  MacroProjectionResponse,
   MarketContext,
+  MonteCarloResponse,
+  NetworkFutureAnalysisResponse,
   RouteEconomicsResponse,
   RoutesResponse,
   ScenarioInput,
+  SearchAirportsResponse,
   WhatIfPresets,
   WhatIfResponse,
 } from "./types";
@@ -69,12 +76,91 @@ export function getWhatIf(params: ScenarioInput) {
   return getJSON<WhatIfResponse>("/what_if", params);
 }
 
+export function getAnalyzeRoute(params: {
+  destination: string;
+  weekly_frequency?: number;
+  aircraft_type?: string;
+  avg_fare_usd?: number;
+  fuel_price_usd_per_gallon?: number;
+  n_existing_carriers?: number;
+}) {
+  return getJSON<AnalyzeRouteResponse>("/analyze_route", params);
+}
+
+export function getAnalyzeRouteAgents(params: {
+  destination: string;
+  weekly_frequency?: number;
+  aircraft_type?: string;
+  avg_fare_usd?: number;
+  fuel_price_usd_per_gallon?: number;
+  n_existing_carriers?: number;
+}) {
+  return getJSON<AnalyzeRouteResponse>("/analyze_route_agents", params);
+}
+
+export function getCompareRoutes(params: {
+  destinations: string[];
+  weekly_frequency?: number;
+  fuel_price_usd_per_gallon?: number;
+}) {
+  return getJSON<CompareRoutesResponse>("/compare_routes", {
+    ...params,
+    destinations: params.destinations.join(","),
+  });
+}
+
+export function getSearchAirports(query: string, limit: number = 8) {
+  return getJSON<SearchAirportsResponse>("/search_airports", { query, limit });
+}
+
+export function getMonteCarlo(params: {
+  destination: string;
+  year: number;
+  month: number;
+  n_simulations?: number;
+  price_delta_pct?: number;
+  frequency_delta?: number;
+  aircraft_type?: string;
+  rating_delta?: number;
+}) {
+  return getJSON<MonteCarloResponse>("/monte_carlo", params);
+}
+
 export function getRoutes() {
   return getJSON<RoutesResponse>("/routes");
 }
 
 export function getCopilot(params: ScenarioInput) {
   return getJSON<CopilotResponse>("/copilot", params);
+}
+
+export function getMacroProjection(destination: string, fromYear: number = 2024, toYear: number = 2032) {
+  return getJSON<MacroProjectionResponse>("/macro_projection", {
+    destination,
+    from_year: fromYear,
+    to_year: toYear,
+  });
+}
+
+export function getFutureAnalysis(
+  destination: string,
+  fromYear: number = 2024,
+  toYear: number = 2032,
+  scenario?: { price_delta_pct?: number; frequency_delta?: number; aircraft_type?: string; rating_delta?: number }
+) {
+  return getJSON<FutureAnalysisResponse>("/future_analysis", {
+    destination,
+    from_year: fromYear,
+    to_year: toYear,
+    ...scenario,
+  });
+}
+
+export function getNetworkFutureAnalysis(fromYear: number = 2025, toYear: number = 2032) {
+  return getJSON<NetworkFutureAnalysisResponse>("/network_future_analysis", {
+    from_year: fromYear,
+    to_year: toYear,
+  });
 }
 
 export async function postChat(messages: ChatMessage[]) {

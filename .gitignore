@@ -8,3 +8,7 @@ venv/
 
 # Local MCP server config (contains API keys)
 .mcp.json
+
+# Large raw government data downloads (re-downloadable; derived CSVs in
+# data/processed and data/reference are committed instead)
+data/raw/

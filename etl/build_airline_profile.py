@@ -40,9 +40,11 @@ MACRO_SNAPSHOT_YEAR = 2019
 ORIGIN = "SYD"
 
 # Pacific Wings network: existing routes + one candidate.
+# Tokyo is served as HND (Haneda), not NRT (Narita) - no carrier flies
+# Sydney-Narita today; real Qantas/JAL/ANA service is to Haneda.
 ROUTES = [
     {"destination": "SIN", "status": "active", "weekly_frequency": 7},
-    {"destination": "NRT", "status": "active", "weekly_frequency": 5},
+    {"destination": "HND", "status": "active", "weekly_frequency": 5},
     {"destination": "MEL", "status": "active", "weekly_frequency": 14},
     {"destination": "AKL", "status": "active", "weekly_frequency": 7},
     {"destination": "DAD", "status": "candidate", "weekly_frequency": 0},

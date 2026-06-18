@@ -53,6 +53,11 @@ def complete(system: str, user_message: str, max_tokens: int = 1024) -> str | No
             config=types.GenerateContentConfig(
                 system_instruction=system,
                 max_output_tokens=max_tokens,
+                # These are short narration-only calls (explain figures already
+                # computed elsewhere) - extended thinking isn't needed, and its
+                # tokens otherwise eat into max_output_tokens and can truncate
+                # the visible reply.
+                thinking_config=types.ThinkingConfig(thinking_budget=0),
             ),
         )
     except (errors.ClientError, errors.ServerError, errors.APIError):

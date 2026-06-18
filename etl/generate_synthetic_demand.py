@@ -1,12 +1,14 @@
 """
-Generate synthetic-but-calibrated monthly demand observations and competitor
-data for each Pacific Wings route, driven by the real features in
-data/airline_profile.json (distance, destination population/tourism/GDP
-growth) plus seasonality and noise.
+Generate synthetic-but-calibrated monthly demand observations for each
+Pacific Wings route, driven by the real features in data/airline_profile.json
+(distance, destination population/tourism/GDP growth) plus seasonality and
+noise; and real-airline competitor data (see COMPETITORS below for sourcing).
 
-This is the Phase 3 training target: because it is generated from a known
-formula, model accuracy can be reported against the true generating
-function.
+Pacific Wings' own demand (demand_observations.csv) generated here is a
+formula-driven baseline. For SIN/HND/AKL/DAD, etl/fetch_real_aviation_stats.py
+(Phase 3) overwrites the passengers/load_factor columns with real
+BITRE-derived figures after this script runs - SYD-MEL is domestic, has no
+downloaded real source, and is left on this formula.
 
 Outputs:
   data/processed/demand_observations.csv  (route, year, month, passengers, avg_fare_usd, load_factor)
@@ -50,7 +52,7 @@ SEASONALITY = {
 }
 ROUTE_SEASONALITY = {
     "SIN": "leisure",
-    "NRT": "leisure",
+    "HND": "leisure",
     "MEL": "domestic",
     "AKL": "leisure",
     "DAD": "leisure",
@@ -71,21 +73,57 @@ FARE_ANNUAL_INFLATION = 0.03
 # tourism_arrivals is in raw headcount/year; normalize against a reference.
 TOURISM_REFERENCE = 10_000_000
 
-# Synthetic-but-plausible competitors per route (name, weekly frequency,
-# fare multiplier relative to Pacific Wings' own avg fare, rating out of 5).
+# Real competitors per route (name, real weekly frequency, fare multiplier
+# relative to Pacific Wings' own modeled avg fare, real Skytrax World Airline
+# Star Rating). Sourced June 2026:
+#   - Frequencies: flight-aggregator schedules (FlightConnections/FlightsFrom/
+#     Directflights) + BITRE international airline activity (data/raw/) for
+#     relative carrier scale - see PLAN.md/README.md for full citations.
+#   - Fare multipliers: spot-checked one-way economy fares (Google
+#     Flights/Skyscanner/Kayak/Qantas/Travelocity, AUD converted at ~0.65
+#     USD/AUD where noted) divided by Pacific Wings' own modeled base fare for
+#     that route - indicative dynamic fares observed June 2026, not a
+#     historical dataset (none exists for free at this granularity).
+#   - Ratings: real Skytrax World Airline Star Rating (skytraxratings.com),
+#     1-5 scale, both mainline and low-cost certifications.
 COMPETITORS = {
-    "SIN": [("Regional Star Airways", 7, 0.95, 4.3), ("Crosswind Air", 5, 1.05, 4.0)],
-    "NRT": [("Skyline Pacific", 4, 1.08, 4.2)],
-    "MEL": [("Coastal Express", 21, 0.92, 3.9), ("Golden Wing", 14, 1.00, 4.1)],
-    "AKL": [("Tasman Air", 7, 0.98, 4.2), ("Crosswind Air", 4, 1.02, 4.0)],
-    "DAD": [("Mekong Air", 3, 0.90, 3.8)],
+    "SIN": [
+        ("Singapore Airlines", 28, 1.60, 5),  # $647 fare / $403 base
+        ("Scoot", 14, 0.42, 4),  # $168 fare / $403 base (Skytrax 4-star low-cost)
+        ("Qantas", 19, 1.76, 4),  # $710 fare / $403 base
+    ],
+    "HND": [
+        ("Qantas", 14, 1.55, 4),  # $732 fare / $472 base
+        ("Japan Airlines", 7, 1.60, 5),  # no exact fare found; assumed ~JAL/ANA premium parity with Qantas
+        ("All Nippon Airways", 14, 1.60, 5),
+    ],
+    "MEL": [
+        ("Qantas", 259, 1.22, 4),  # AU$212 -> $137.80 / $113 base
+        ("Virgin Australia", 189, 0.74, 4),  # AU$129 -> $83.85 / $113 base
+        ("Jetstar", 126, 0.24, 3),  # AU$41 -> $26.65 / $113 base (Skytrax 3-star low-cost)
+    ],
+    "AKL": [
+        ("Qantas", 40, 0.90, 4),  # AU$299 -> $194.35 / $217 base
+        ("Air New Zealand", 30, 0.90, 4),  # no exact fare found; assumed parity with Qantas on this route
+        ("Jetstar", 11, 0.60, 3),  # AU$200 -> $130 / $217 base
+    ],
+    # DAD: no airline flies Sydney-Da Nang nonstop today - intentionally
+    # zero competitors. Closest real comparables are SYD-SGN (Qantas daily +
+    # Vietnam Airlines ~daily) and SYD-HAN (Vietnam Airlines + VietJet,
+    # ~3-4x/week); DAD is modeled as a speculative, currently-unserved
+    # secondary-market opportunity, not a mainstream route.
+    "DAD": [],
 }
 
 
-def main() -> None:
-    rng = np.random.default_rng(RANDOM_SEED)
-    profile = json.loads(PROFILE_PATH.read_text())
+def build_rows(profile: dict, rng: np.random.Generator) -> tuple[list[dict], list[dict]]:
+    """Build (demand_rows, competitor_rows) for every route in the profile.
 
+    Factored out of main() so etl/fetch_real_aviation_stats.py (Phase 3) can
+    reuse the fare formula and competitor data, then overwrite the
+    passengers/load_factor columns with real BITRE-derived figures for the
+    routes real data is available for.
+    """
     demand_rows = []
     competitor_rows = []
 
@@ -157,6 +195,14 @@ def main() -> None:
                     "rating": rating,
                 }
             )
+
+    return demand_rows, competitor_rows
+
+
+def main() -> None:
+    rng = np.random.default_rng(RANDOM_SEED)
+    profile = json.loads(PROFILE_PATH.read_text())
+    demand_rows, competitor_rows = build_rows(profile, rng)
 
     DEMAND_OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
     pd.DataFrame(demand_rows).to_csv(DEMAND_OUTPUT_PATH, index=False)

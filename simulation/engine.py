@@ -57,6 +57,9 @@ class SimulationEngine:
         rating_delta: float = 0.0,
         tourism_arrivals_multiplier: float = 1.0,
         extra_competitors: list[dict] | None = None,
+        gdp_usd_override: float | None = None,
+        gdp_growth_pct_override: float | None = None,
+        population_override: float | None = None,
     ) -> dict:
         route = self.ref.route(destination)
 
@@ -77,6 +80,9 @@ class SimulationEngine:
             scenario_fare,
             tourism_arrivals_multiplier=tourism_arrivals_multiplier,
             extra_competitors=extra_competitors,
+            gdp_usd_override=gdp_usd_override,
+            gdp_growth_pct_override=gdp_growth_pct_override,
+            population_override=population_override,
         )
         X = pd.DataFrame([features])[self._feature_columns]
         predicted_passengers = float(self._model.predict(X)[0])

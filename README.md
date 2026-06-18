@@ -12,11 +12,14 @@ data. See [PLAN.md](PLAN.md) for the full project roadmap.
 | Real — macro | GDP, population, tourism arrivals | [World Bank Open Data API](https://api.worldbank.org/v2) |
 | Real — reference | Aircraft seats, range, fuel burn, CASM | Curated from Airbus/Boeing public spec sheets |
 | Real — fuel | Jet fuel price history | EIA (planned) |
-| Synthetic — calibrated | Demand, fares, load factors, market share | Generated from real features + noise, calibrated to published benchmarks |
+| Real — competitors | Carriers, frequencies, Skytrax ratings, spot-checked fares per route | Flight-aggregator schedules + Skytrax (see `etl/generate_synthetic_demand.py`) |
+| Real-derived — demand | Monthly passengers/load factor for SIN, HND, AKL (+ a population-scaled estimate for candidate route DAD) | BITRE international airline statistics (see `etl/fetch_real_aviation_stats.py`) |
+| Synthetic — calibrated | Demand/load factor for SYD-MEL (domestic — no real source downloaded), fares for all routes, market share | Generated from real features + noise, calibrated to published benchmarks |
 
 This separation is intentional and documented throughout: real drivers,
-synthetic-but-plausible outcomes that models can be trained and evaluated
-against with known ground truth.
+real data where it's freely available, and synthetic-but-plausible
+fallbacks elsewhere — evaluated against known ground truth and never
+presented as more authoritative than it is.
 
 ## Setup
 
@@ -45,9 +48,16 @@ python fetch_airports.py          # -> data/reference/airports.csv
 python fetch_worldbank.py         # -> data/reference/macro_indicators.csv
 python build_airline_profile.py   # -> data/airline_profile.json
 python generate_synthetic_demand.py  # -> data/processed/{demand_observations,competitors}.csv
+python fetch_real_aviation_stats.py  # -> overwrites demand_observations.csv with real BITRE figures
 ```
 
 `data/aircraft_specs.json` is a static curated table (no fetch needed).
+
+`fetch_real_aviation_stats.py` requires two BITRE spreadsheets to already be
+present in `data/raw/` (large government files, gitignored, downloaded
+manually since BITRE/data.gov.au block programmatic fetches) — see the
+script's module docstring for exact filenames, sources, and what's real vs.
+assumption per route.
 
 ## Database
 
@@ -119,14 +129,56 @@ curl "http://127.0.0.1:8000/what_if?destination=SIN&year=2025&month=7&price_delt
 # Add 4 more weekly flights to SYD-DAD
 curl "http://127.0.0.1:8000/what_if?destination=DAD&year=2025&month=12&frequency_delta=4"
 
-# Swap SYD-NRT to an A321neo
-curl "http://127.0.0.1:8000/what_if?destination=NRT&year=2025&month=12&aircraft_type=A321neo"
+# Swap SYD-HND to an A321neo
+curl "http://127.0.0.1:8000/what_if?destination=HND&year=2025&month=12&aircraft_type=A321neo"
 ```
 
 Scenario params (all optional, default 0/unchanged): `price_delta_pct`,
 `frequency_delta`, `fuel_price_usd_per_gallon`, `aircraft_type`,
 `rating_delta`. See `docs/cost_assumptions.md` for the market share and
 simulation engine methodology.
+
+## Future analysis & macro projections
+
+Three endpoints project economic fundamentals and route P&L forward across a
+multi-year horizon (default 2024–2032). Unlike point-in-time what-if queries,
+these feed projected GDP, tourism, population, and fuel prices into each
+simulation year so the total addressable market evolves over time.
+
+### Mathematical models
+
+| Indicator | Method |
+|---|---|
+| GDP | EWMA of recent non-COVID growth rates, mean-reverted toward IMF long-run rate (AUS 2.3 %, JPN 0.9 %, VNM 6 %, etc.). Blend shifts toward long-run as the horizon extends. |
+| Population | OLS linear trend fitted to the last 6 historical years, extrapolated forward. |
+| Tourism | Pre-COVID structural CAGR (2015–2019) compounded from the 2019 baseline. |
+| Fuel price | Discrete Ornstein-Uhlenbeck model: `P[t] = P[t-1] + 0.3 × ($2.50 − P[t-1])`. |
+| Market size | `0.6 × (GDP ratio ^ 1.5 elasticity) + 0.4 × tourism ratio`. The `demand_multiplier` shows how much larger the total addressable market becomes relative to the start year. |
+
+### API
+
+```bash
+# Macro projections for Singapore 2024-2032
+curl "http://127.0.0.1:8000/macro_projection?destination=SIN&from_year=2024&to_year=2032"
+
+# Full P&L trajectory for SYD-HND with projected macro
+curl "http://127.0.0.1:8000/future_analysis?destination=HND&from_year=2025&to_year=2032"
+
+# Network-wide portfolio ranking by cumulative projected profit
+curl "http://127.0.0.1:8000/network_future_analysis?from_year=2025&to_year=2032"
+```
+
+Optional scenario overrides for `/future_analysis`: `price_delta_pct`,
+`frequency_delta`, `aircraft_type`, `rating_delta` — applied uniformly across
+all projected years.
+
+### Source files
+
+```
+simulation/
+  macro_projections.py   GDP, population, tourism, fuel & market-size models
+  future_analysis.py     Route fundamentals, multi-year P&L, network ranking
+```
 
 ## AI agents & copilot (Phases 8-9)
 
@@ -156,19 +208,31 @@ via `GEMINI_MODEL` (defaults to `gemini-2.5-flash`).
 ## Frontend dashboard (Phase 11)
 
 A Next.js (App Router, TypeScript, Tailwind, Recharts, React-Leaflet) dashboard
-in `frontend/` provides four views:
+in `frontend/` provides nine views:
 
 - **Executive Dashboard** (`/`) - current-month profit, load factor, and
   market share for each active route, plus a profit-by-route chart.
 - **Route Explorer** (`/routes`) - a Leaflet/OpenStreetMap map of SYD and its
   routes (including the SYD-DAD candidate route), with a details panel
   showing distance, frequency, fleet, and market stats for the selected route.
-- **Scenario Simulator** (`/simulator`) - run manual what-if deltas or named
-  presets (from `/what_if_presets`) and compare baseline vs. scenario via
-  tables, bar charts, and market-share pie charts.
-- **AI Strategy Assistant** (`/copilot`) - same scenario inputs, calling
-  `/copilot` for demand/finance deltas plus market/risk/strategy commentary
-  (or graceful "unavailable" notices without `GEMINI_API_KEY`).
+- **Market Intelligence** (`/market`) - route opportunity ranking, competitor
+  positioning, GDP/tourism correlation, and market share leaderboard.
+- **Demand Forecasting** (`/demand`) - 12-month passenger and load-factor
+  series, YoY growth, demand-driver breakdown, and competitor intelligence.
+- **Revenue Intelligence** (`/revenue`) - cabin revenue composition, pricing
+  simulator, revenue leaderboard, and sparkline trend charts.
+- **AI Agents** (`/copilot`) - conversational AI executive team with nine
+  function-calling tools (simulation, forecasting, future analysis, macro
+  projection, network ranking).
+- **Future Analysis** (`/future`) - multi-year GDP, population, tourism, and
+  fuel price projections; annual P&L trajectory with macro-adjusted demand;
+  market size multiplier chart; monthly profile for the end year; network
+  portfolio ranking by cumulative projected profit. Route and year-range
+  selectable interactively.
+- **Risk Intelligence** (`/risk`) - network risk score, stress-test simulator,
+  route-level fuel/competitive/economic/capacity risk coefficients.
+- **Reports** (`/reports`) - full five-agent pipeline output with strategy
+  recommendation, demand/finance agent numbers, and market/risk commentary.
 
 Run the backend and frontend in separate terminals:
 
@@ -223,8 +287,11 @@ data/
     airports.csv            Real airport coordinates/distances
     macro_indicators.csv    Real GDP/population/tourism per country/year
   processed/
-    demand_observations.csv Synthetic monthly demand (Phase 3 training target)
-    competitors.csv          Synthetic per-route competitor data
+    demand_observations.csv Monthly demand (Phase 3 training target) - real BITRE-derived
+                             for SIN/HND/AKL/DAD, synthetic formula for domestic SYD-MEL
+    competitors.csv          Real carriers/frequencies/ratings/fares per route
+  raw/
+    bitre_*.xlsx              Manually-downloaded BITRE source spreadsheets (gitignored)
 models/
   demand_model.json          Trained XGBoost demand model
   feature_columns.json        Feature column order
@@ -237,6 +304,8 @@ simulation/
   cost.py                       Phase 5 cost model
   market_share.py              Phase 6 market share model
   engine.py                     Phase 7 simulation engine
+  macro_projections.py         GDP/population/tourism/fuel projection models
+  future_analysis.py           Multi-year route P&L and network portfolio analysis
 agents/
   llm_client.py                Claude client wrapper (graceful degradation, no API key)
   context.py                   Real macro/tourism + competitor context for Market/Risk agents
@@ -265,8 +334,13 @@ frontend/
   app/
     page.tsx                    Executive Dashboard ("/")
     routes/page.tsx             Route Explorer
-    simulator/page.tsx          Scenario Simulator
-    copilot/page.tsx            AI Strategy Assistant
+    market/page.tsx             Market Intelligence
+    demand/page.tsx             Demand Forecasting
+    revenue/page.tsx            Revenue Intelligence
+    future/page.tsx             Future Analysis & Macro Projections
+    copilot/page.tsx            AI Agents (conversational + tool-calling)
+    risk/page.tsx               Risk Intelligence
+    reports/page.tsx            Executive Reports
   components/                   Shared UI (nav, charts, map, scenario form, ...)
   lib/                          API client, types, constants
 ```

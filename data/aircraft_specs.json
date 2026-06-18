@@ -1,5 +1,5 @@
 {
-  "_source_notes": "Seat configs based on typical two/three-class configurations used by real operators (e.g., Qantas A320/A321/787-9 family). Range and cruise fuel burn are publicly published manufacturer figures (Airbus/Boeing spec sheets). CASK (cost per available-seat-km, USD) is an approximate industry-typical figure derived from published airline cost reports (IATA/CAPA economic analyses) - treat as a calibration starting point, not an exact figure for any single carrier.",
+  "_source_notes": "Seat configs based on typical two/three-class configurations used by real operators (e.g., Qantas A320/A321/787-9 family). Range and cruise fuel burn are publicly published manufacturer figures (Airbus/Boeing spec sheets). casm_usd is the TOTAL cost per available-seat-km at the $1.74/gallon 2019 baseline fuel price (see simulation/cost.py, docs/cost_assumptions.md) - its non-fuel portion is real-anchored (Phase 4): Qantas Group's FY25 disclosed ex-fuel unit cost (6.22 AUD cents/ASK; FY24 was 5.97) is the only clean public CASK figure found for any of the relevant carriers (Air NZ, Singapore Airlines did not yield one) - it is a GROUP BLEND across Qantas mainline + Jetstar and all stage lengths, not a per-aircraft figure. Converted to USD at the same ~0.65 USD/AUD rate used for Phase 2's fare conversions (6.22 AUD cents x 0.65 / 100 = $0.0404/ASK), then each aircraft's prior (pre-Phase-4) non-fuel CASM was scaled by a single factor (0.7884) so the Pacific Wings network's ASK-weighted average non-fuel CASM matches that real anchor exactly, preserving the existing relative cost-per-aircraft-type shape (smaller/shorter-stage aircraft cost more per seat-km, consistent with real-world economics of scale). The fuel portion of casm_usd below is unchanged - still computed per-aircraft from real fuel-burn specs at the $1.74/gal baseline, independent of Qantas's own (unknown, FY25-environment) fuel price.",
   "aircraft": [
     {
       "type": "A320-200",
@@ -12,7 +12,7 @@
       "range_km": 6150,
       "cruise_fuel_burn_kg_per_hour": 2400,
       "cruise_speed_kmh": 828,
-      "casm_usd": 0.075
+      "casm_usd": 0.0615
     },
     {
       "type": "A321neo",
@@ -25,7 +25,7 @@
       "range_km": 7400,
       "cruise_fuel_burn_kg_per_hour": 2800,
       "cruise_speed_kmh": 828,
-      "casm_usd": 0.065
+      "casm_usd": 0.0533
     },
     {
       "type": "B787-9",
@@ -39,7 +39,7 @@
       "range_km": 14140,
       "cruise_fuel_burn_kg_per_hour": 5400,
       "cruise_speed_kmh": 903,
-      "casm_usd": 0.055
+      "casm_usd": 0.0464
     }
   ]
 }

@@ -1,13 +1,36 @@
 "use client";
 
 import { Suspense, useEffect, useRef, useState } from "react";
+import type { ComponentPropsWithoutRef } from "react";
 import { useSearchParams } from "next/navigation";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { getHealth, postChat } from "@/lib/api";
 import type { ChatMessage, ChatToolCall } from "@/lib/types";
 import { EXAMPLE_QUESTIONS } from "@/lib/constants";
 import ChatToolResult from "@/components/ChatToolResult";
 import AvailabilityNotice from "@/components/AvailabilityNotice";
 import ErrorMessage from "@/components/ErrorMessage";
+
+// ─── markdown rendering for AI replies ────────────────────────────────────────
+
+const MARKDOWN_COMPONENTS = {
+  h1: ({ children }: ComponentPropsWithoutRef<"h1">) => (
+    <h3 className="mt-3 mb-1.5 font-label text-[11px] uppercase tracking-widest text-primary first:mt-0">{children}</h3>
+  ),
+  h2: ({ children }: ComponentPropsWithoutRef<"h2">) => (
+    <h3 className="mt-3 mb-1.5 font-label text-[11px] uppercase tracking-widest text-primary first:mt-0">{children}</h3>
+  ),
+  h3: ({ children }: ComponentPropsWithoutRef<"h3">) => (
+    <h4 className="mt-2 mb-1 font-label text-[10px] uppercase tracking-widest text-tertiary">{children}</h4>
+  ),
+  p: ({ children }: ComponentPropsWithoutRef<"p">) => <p className="mb-2 last:mb-0">{children}</p>,
+  ul: ({ children }: ComponentPropsWithoutRef<"ul">) => <ul className="mb-2 ml-4 list-disc space-y-0.5">{children}</ul>,
+  ol: ({ children }: ComponentPropsWithoutRef<"ol">) => <ol className="mb-2 ml-4 list-decimal space-y-0.5">{children}</ol>,
+  li: ({ children }: ComponentPropsWithoutRef<"li">) => <li className="leading-relaxed">{children}</li>,
+  strong: ({ children }: ComponentPropsWithoutRef<"strong">) => <strong className="font-semibold text-on-surface">{children}</strong>,
+  hr: () => <hr className="my-2 border-white/10" />,
+};
 
 // ─── agent definitions ────────────────────────────────────────────────────────
 
@@ -211,15 +234,15 @@ function CopilotPageInner() {
             <div className={`space-y-2 ${msg.role === "user" ? "max-w-[75%]" : "w-full"}`}>
               {msg.available === false ? (
                 <AvailabilityNotice text={msg.content} />
-              ) : (
-                <div
-                  className={
-                    msg.role === "user"
-                      ? "rounded-lg bg-accent-blue px-4 py-2 text-sm text-white whitespace-pre-wrap"
-                      : "rounded-lg border border-white/10 bg-white/5 px-4 py-3 text-sm text-on-surface whitespace-pre-wrap leading-relaxed"
-                  }
-                >
+              ) : msg.role === "user" ? (
+                <div className="rounded-lg bg-accent-blue px-4 py-2 text-sm text-white whitespace-pre-wrap">
                   {msg.content}
+                </div>
+              ) : (
+                <div className="rounded-lg border border-white/10 bg-white/5 px-4 py-3 text-sm text-on-surface leading-relaxed">
+                  <ReactMarkdown remarkPlugins={[remarkGfm]} components={MARKDOWN_COMPONENTS}>
+                    {msg.content}
+                  </ReactMarkdown>
                 </div>
               )}
 

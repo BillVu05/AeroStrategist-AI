@@ -1,9 +1,13 @@
 origin,destination,competitor_name,weekly_frequency,avg_fare_usd,rating
-SYD,SIN,Regional Star Airways,7,383.04,4.3
-SYD,SIN,Crosswind Air,5,423.36,4.0
-SYD,NRT,Skyline Pacific,4,510.26,4.2
-SYD,MEL,Coastal Express,21,103.89,3.9
-SYD,MEL,Golden Wing,14,112.92,4.1
-SYD,AKL,Tasman Air,7,212.82,4.2
-SYD,AKL,Crosswind Air,4,221.5,4.0
-SYD,DAD,Mekong Air,3,398.92,3.8
+SYD,SIN,Singapore Airlines,28,645.12,5
+SYD,SIN,Scoot,14,169.35,4
+SYD,SIN,Qantas,19,709.64,4
+SYD,HND,Qantas,14,731.29,4
+SYD,HND,Japan Airlines,7,754.88,5
+SYD,HND,All Nippon Airways,14,754.88,5
+SYD,MEL,Qantas,259,137.76,4
+SYD,MEL,Virgin Australia,189,83.56,4
+SYD,MEL,Jetstar,126,27.1,3
+SYD,AKL,Qantas,40,195.44,4
+SYD,AKL,Air New Zealand,30,195.44,4
+SYD,AKL,Jetstar,11,130.3,3

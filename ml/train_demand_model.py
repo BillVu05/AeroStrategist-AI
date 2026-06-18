@@ -1,16 +1,24 @@
 """
 Train an XGBoost regressor to forecast monthly route passenger demand
 (Phase 3), using real distance/macro/competitor features plus the route's
-own average fare and month, against the synthetic `demand_observations`
-ground truth.
-
-Because the target is generated from a known formula
-(etl/generate_synthetic_demand.py), the reported test-set accuracy reflects
-how well the model recovers that generating function from features alone -
-this is documented explicitly rather than presented as "real-world" accuracy.
+own average fare and month, against the `demand_observations` ground truth -
+real BITRE-derived figures for SIN/HND/AKL/DAD, a synthetic formula for
+SYD-MEL (see etl/fetch_real_aviation_stats.py, the real-data rebuild Phase 3).
 
 Train/test split is time-based: train on 2022-2023, test on 2024, so the
-model is evaluated on its ability to forecast a future, unseen year.
+model is evaluated on its ability to forecast a future, unseen year. This
+is the headline metric, reported in models/metrics.json's top-level
+mae/mape/r2 fields.
+
+Phase 5 (real-data rebuild) adds two validation-rigor pieces alongside that
+headline split, both also written to models/metrics.json:
+  - k-fold cross-validation (shuffled, ignores time order) - a second,
+    independent read on model stability across different train/test splits
+    of the same data, complementing the strict forward-looking holdout.
+  - residual quantiles from the time-based holdout's prediction errors -
+    used by api/main.py to attach an empirical prediction interval to
+    /demand_forecast (a residual-bootstrap-style band: point forecast plus
+    the historical 10th/90th percentile error, not a model-based interval).
 
 Usage:
     python ml/train_demand_model.py
@@ -18,7 +26,7 @@ Usage:
 Outputs:
     models/demand_model.json     XGBoost model (native format)
     models/feature_columns.json  Ordered feature column names
-    models/metrics.json          Evaluation metrics on the 2024 holdout
+    models/metrics.json          Holdout metrics, cross-validation, residual quantiles
 """
 
 import json
@@ -29,6 +37,7 @@ import numpy as np
 import pandas as pd
 import xgboost as xgb
 from sklearn.metrics import mean_absolute_error, mean_absolute_percentage_error, r2_score
+from sklearn.model_selection import KFold
 from sqlalchemy import create_engine
 
 from features import FEATURE_COLUMNS, ReferenceData
@@ -41,6 +50,43 @@ DATABASE_URL = os.environ.get(
 )
 
 TEST_YEAR = 2024
+N_CV_FOLDS = 5
+CV_RANDOM_STATE = 42
+
+MODEL_PARAMS = dict(
+    n_estimators=150,
+    max_depth=3,
+    learning_rate=0.1,
+    subsample=0.9,
+    colsample_bytree=0.9,
+    random_state=42,
+)
+
+
+def cross_validate(X: pd.DataFrame, y: pd.Series) -> dict:
+    """K-fold CV (shuffled) over the full dataset, ignoring time order -
+    complements the time-based holdout with a read on how much performance
+    varies across different random splits of the same real-grounded data."""
+    kfold = KFold(n_splits=N_CV_FOLDS, shuffle=True, random_state=CV_RANDOM_STATE)
+    fold_metrics = {"mae": [], "mape": [], "r2": []}
+
+    for train_idx, test_idx in kfold.split(X):
+        fold_model = xgb.XGBRegressor(**MODEL_PARAMS)
+        fold_model.fit(X.iloc[train_idx], y.iloc[train_idx])
+        pred = fold_model.predict(X.iloc[test_idx])
+        y_test_fold = y.iloc[test_idx]
+        fold_metrics["mae"].append(mean_absolute_error(y_test_fold, pred))
+        fold_metrics["mape"].append(mean_absolute_percentage_error(y_test_fold, pred))
+        fold_metrics["r2"].append(r2_score(y_test_fold, pred))
+
+    return {
+        "n_splits": N_CV_FOLDS,
+        **{
+            f"{metric}_{stat}": float(getattr(np, stat)(values))
+            for metric, values in fold_metrics.items()
+            for stat in ("mean", "std")
+        },
+    }
 
 
 def load_observations(engine) -> pd.DataFrame:
@@ -70,17 +116,15 @@ def main() -> None:
     X_train, y_train = X[train_mask], y[train_mask]
     X_test, y_test = X[~train_mask], y[~train_mask]
 
-    model = xgb.XGBRegressor(
-        n_estimators=150,
-        max_depth=3,
-        learning_rate=0.1,
-        subsample=0.9,
-        colsample_bytree=0.9,
-        random_state=42,
-    )
+    model = xgb.XGBRegressor(**MODEL_PARAMS)
     model.fit(X_train, y_train)
 
     pred = model.predict(X_test)
+    residuals = (y_test - pred).to_numpy()
+    residual_quantiles = {
+        f"p{q}": float(np.percentile(residuals, q)) for q in (10, 25, 50, 75, 90)
+    }
+
     metrics = {
         "test_year": TEST_YEAR,
         "n_train": int(len(X_train)),
@@ -88,6 +132,8 @@ def main() -> None:
         "mae": float(mean_absolute_error(y_test, pred)),
         "mape": float(mean_absolute_percentage_error(y_test, pred)),
         "r2": float(r2_score(y_test, pred)),
+        "cross_validation": cross_validate(X, y),
+        "residual_quantiles": residual_quantiles,
     }
 
     importances = dict(zip(FEATURE_COLUMNS, model.feature_importances_.astype(float)))
@@ -101,6 +147,12 @@ def main() -> None:
     print(f"  MAE:  {metrics['mae']:.1f} passengers")
     print(f"  MAPE: {metrics['mape']:.2%}")
     print(f"  R2:   {metrics['r2']:.3f}")
+    cv = metrics["cross_validation"]
+    print(f"\n{N_CV_FOLDS}-fold CV (shuffled, ignores time order):")
+    print(f"  MAE:  {cv['mae_mean']:.1f} +/- {cv['mae_std']:.1f}")
+    print(f"  MAPE: {cv['mape_mean']:.2%} +/- {cv['mape_std']:.2%}")
+    print(f"  R2:   {cv['r2_mean']:.3f} +/- {cv['r2_std']:.3f}")
+    print(f"\nHoldout residual quantiles (passengers, actual - predicted): {residual_quantiles}")
     print("\nFeature importances:")
     for name, importance in sorted(importances.items(), key=lambda kv: -kv[1]):
         print(f"  {name:28s} {importance:.3f}")

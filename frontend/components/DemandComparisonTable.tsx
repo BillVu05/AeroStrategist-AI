@@ -3,6 +3,8 @@ import type { RouteInfo } from "@/lib/types";
 export interface DemandComparisonRow {
   route: RouteInfo;
   monthlyDemand: number;
+  monthlyDemandLow: number;
+  monthlyDemandHigh: number;
   avgFareUsd: number;
   loadFactor: number;
   yoyGrowthPct: number;
@@ -42,6 +44,9 @@ export default function DemandComparisonTable({ rows }: DemandComparisonTablePro
             <tr>
               <th className="px-6 py-3 font-normal">Route</th>
               <th className="px-6 py-3 font-normal">Monthly Demand</th>
+              <th className="px-6 py-3 font-normal" title="80% empirical prediction interval from the demand model's real holdout residuals">
+                80% Range
+              </th>
               <th className="px-6 py-3 font-normal">Avg Fare</th>
               <th className="px-6 py-3 font-normal">Load Factor</th>
               <th className="px-6 py-3 font-normal">YoY Growth</th>
@@ -60,6 +65,9 @@ export default function DemandComparisonTable({ rows }: DemandComparisonTablePro
                     </div>
                   </td>
                   <td className="px-6 py-4 text-on-surface">{Math.round(row.monthlyDemand).toLocaleString()}</td>
+                  <td className="px-6 py-4 text-on-surface-variant">
+                    {Math.round(row.monthlyDemandLow).toLocaleString()} &ndash; {Math.round(row.monthlyDemandHigh).toLocaleString()}
+                  </td>
                   <td className="px-6 py-4 text-on-surface">${row.avgFareUsd.toFixed(0)}</td>
                   <td className="px-6 py-4 text-on-surface">{(row.loadFactor * 100).toFixed(1)}%</td>
                   <td className={`px-6 py-4 font-bold ${row.yoyGrowthPct >= 0 ? "text-tertiary" : "text-error"}`}>

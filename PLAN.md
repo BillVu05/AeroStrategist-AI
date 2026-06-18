@@ -32,7 +32,7 @@ frequency only.
 Fictional airline **Pacific Wings**, based at Sydney (SYD), real routes/airports:
 
 - SYD → SIN (Singapore Changi)
-- SYD → NRT (Tokyo Narita)
+- SYD → HND (Tokyo Haneda)
 - SYD → MEL (Melbourne)
 - SYD → AKL (Auckland)
 - Candidate new route: SYD → DAD (Da Nang)
@@ -131,8 +131,12 @@ Done:
 6. `db/schema.sql` — PostgreSQL schema for Phase 2
 7. `requirements.txt`, `README.md`
 8. `docker-compose.yml` (Postgres, schema auto-applied) + `etl/load_db.py` — verified end-to-end, all tables loaded
-9. Phase 3: `ml/features.py`, `ml/train_demand_model.py` (XGBoost, time-based 2022-2023 train / 2024 test split,
-   R2=0.984, MAPE=3.7%), `api/main.py` (`/demand_forecast`, `/health`) — verified end-to-end via local server
+9. Phase 3: `ml/features.py`, `ml/train_demand_model.py` (XGBoost, time-based 2022-2023 train / 2024 test split),
+   `api/main.py` (`/demand_forecast`, `/health`) — verified end-to-end via local server. Training target was
+   initially fully synthetic (R2=0.984, MAPE=3.7% — near-perfect because the target was a known formula the
+   model could recover); `etl/fetch_real_aviation_stats.py` (real-data rebuild, see below) later replaced
+   passengers/load_factor with real BITRE figures for SIN/HND/AKL/DAD, giving R2=0.952, MAPE=15.3% — lower
+   but now a genuine forecast-skill number against real-world noise, not formula recovery.
 10. Phase 4-5: `data/reference/fuel_prices.csv` (curated EIA annual averages), `docs/cost_assumptions.md`,
     `simulation/revenue.py` (cabin fare split + ancillary), `simulation/cost.py` (fuel/non-fuel CASM split,
     what-if fuel price lever), `api/main.py` `/route_economics` (demand -> revenue -> cost -> profit) —
@@ -155,7 +159,7 @@ Done:
     thread both levers through `run_scenario`/`compare`. `api/main.py` `/what_if_presets` (lists presets) and
     `preset=` param on `/what_if` and `/copilot` - verified end-to-end: `fuel_price_shock` swings SIN profit
     from -$142.8k to -$290.2k, `competitor_entry` drops Pacific Wings' SIN market share from 22.8% to 17.6%.
-    Note: `tourism_boom` is wired correctly but has near-zero effect on existing routes (SIN/NRT/MEL/AKL) -
+    Note: `tourism_boom` is wired correctly but has near-zero effect on existing routes (SIN/HND/MEL/AKL) -
     the demand model's tree splits on `tourism_arrivals_baseline` happen to fall between routes' fixed
     training values, so a +/-20% perturbation within one route mostly doesn't cross a split boundary. Only
     DAD (candidate route) shows a measurable effect (~104 passengers). This is an inherent limitation of
@@ -185,6 +189,58 @@ Done:
     and both `/` and `/simulator` return 200 from `frontend`. `db` remains used for ETL/training
     only - the API reads its baked-in model/data and doesn't need it at runtime.
 
+16. **Real-data rebuild** (post-launch hardening — replacing the synthetic-but-calibrated tier with real,
+    citable data where it exists; full research/citations in the session plan doc):
+    - Phase 1 — route correction: swapped `SYD-NRT` to the real-world `SYD-HND` (no carrier flies Narita
+      from Sydney today) across `etl/build_airline_profile.py`, `etl/fetch_airports.py`,
+      `etl/generate_synthetic_demand.py`, frontend constants.
+    - Phase 2 — real competitors: `etl/generate_synthetic_demand.py`'s `COMPETITORS` now lists real carriers/
+      frequencies/Skytrax ratings/spot-checked fares per route; recalibrated `simulation/market_share.py`'s
+      logit model for the wider real frequency/fare range (sanity-checked: Singapore Airlines ~61% modeled
+      vs ~60% real BITRE share on SYD-SIN).
+    - Phase 3 — real demand: new `etl/fetch_real_aviation_stats.py` parses two manually-downloaded BITRE
+      spreadsheets (`data/raw/`, gitignored) into real monthly passenger/load-factor figures for SIN, HND,
+      and AKL, and a population-scaled real-reference estimate for the DAD candidate route. SYD-MEL is
+      domestic — no real source was downloaded for it, so it stays on the original synthetic formula
+      (documented choice, not an oversight). Retrained `ml/train_demand_model.py` — see item 9 for the
+      before/after metrics.
+    - Phase 4 — cost & fare calibration: `data/aircraft_specs.json`'s non-fuel CASM is now anchored to Qantas
+      Group's FY25 disclosed ex-fuel unit cost (6.22 AUD cents/ASK, the only clean public figure found across
+      the relevant carriers — a group blend, not per-aircraft), scaled uniformly across the fleet to preserve
+      the prior relative shape (see `docs/cost_assumptions.md`). Found and fixed a bug along the way:
+      `agents/open_route_analyst.py`'s separate fare-by-distance table (used for arbitrary new destinations)
+      was running 60-105% above the real-anchored fare formula already in `etl/generate_synthetic_demand.py`
+      (which, it turns out, already matched Phase 2's real spot-checked fares almost exactly — no changes
+      needed there) — replaced it with the same formula. Re-verified via `SimulationEngine`: lower CASM
+      raised profit/reduced losses across all 5 routes directionally as expected, nothing broke.
+    - Phase 5 — forecasting research deepening: `ml/train_demand_model.py` adds 5-fold cross-validation
+      (R2=0.966+/-0.014, but MAPE=42%+/-26% - far less stable than the single 2024 holdout's 15.3%, traced to
+      DAD's tiny passenger counts blowing up percentage error in under-represented folds) and residual
+      quantiles from the real holdout, surfaced as an 80% prediction interval on `/demand_forecast`
+      (`predicted_passengers_low/high`) and in the demand page's comparison table. New
+      `simulation/monte_carlo.py` samples fuel price and GDP growth from REAL historical volatility
+      (`data/reference/fuel_prices.csv`, `macro_indicators.csv`) plus an illustrative competitor-entry
+      probability, running hundreds of `SimulationEngine` passes to return an outcome distribution instead of
+      a point estimate - exposed via `/monte_carlo`, a `run_route_monte_carlo` chat tool (verified the live
+      Gemini agent actually selects it and cites the right figures), and a `MonteCarloPanel` on the Scenario
+      Simulator page (histogram + percentiles, verified in-browser via Playwright with zero console errors).
+      New `docs/data_methodology.md` is a full per-field real/real-derived/illustrative provenance appendix
+      across the whole pipeline.
+
+17. **Standalone Open Route page**: the worldwide new-route analysis (`agents/open_route_analyst.py` +
+    `agents/open_route_agents.py`) was previously chat-only. Added `api/main.py`'s `GET /analyze_route_agents`
+    (the five-agent narrative, `analyze_with_agents`, wasn't reachable outside the Gemini function-calling
+    path before this). Extracted `AnalyzeNewRouteResult`/`CompareNewRoutesResult` out of `ChatToolResult.tsx`
+    into shared `frontend/components/RouteAnalysisCard.tsx` (`RouteAnalysisReport`/`RouteComparisonList`) so
+    the chat cards and the new page render identically from the same backend shape. New `frontend/app/open-
+    route/page.tsx` + `OpenRouteForm.tsx` (destination autocomplete via `/search_airports`, frequency/
+    aircraft/fare/fuel/competitor overrides, a single-destination report, a multi-city comparison queue, and
+    an on-demand "Generate AI analysis" button so the page loads instantly without waiting on 3 LLM calls).
+    Nav updated. Verified end-to-end in-browser via Playwright (single analysis, AI evidence generation, and
+    a 2-city comparison), zero console errors. The chat agent remains the natural-language entry point
+    (resolves ambiguous cities, multi-turn refinement); this page is the persistent/shareable structured
+    workspace it can hand off to.
+
 Next:
-- All 12 phases complete. Possible stretch goals: AWS/Prometheus/Grafana (noted as optional in
-  the original plan, not required for the portfolio demo).
+- All 5 real-data rebuild phases are complete (see item 16), and all 12 original phases are complete.
+  AWS/Prometheus/Grafana remain optional stretch goals, not required for the portfolio demo.
