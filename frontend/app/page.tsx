@@ -2,18 +2,17 @@
 
 import { useEffect, useState } from "react";
 import dynamic from "next/dynamic";
+import { useRouter } from "next/navigation";
 import { getDemandForecast, getHealth, getRouteEconomics, getRoutes, getWhatIf } from "@/lib/api";
 import type { RouteInfo, RoutesResponse, WhatIfResponse } from "@/lib/types";
 import { DEFAULT_MONTH, DEFAULT_YEAR } from "@/lib/constants";
 import LoadingSpinner from "@/components/LoadingSpinner";
 import ErrorMessage from "@/components/ErrorMessage";
-import AIPromptBar from "@/components/AIPromptBar";
 import KpiCard from "@/components/KpiCard";
 import MiniBarPanel from "@/components/MiniBarPanel";
 import RevenueByCabinPanel from "@/components/RevenueByCabinPanel";
-import ScenarioQuickSim from "@/components/ScenarioQuickSim";
+import ScenarioCta from "@/components/ScenarioCta";
 import AgentStatusPanel from "@/components/AgentStatusPanel";
-import StatusFooter from "@/components/StatusFooter";
 
 const RouteMap = dynamic(() => import("@/components/RouteMap"), { ssr: false });
 
@@ -29,7 +28,6 @@ interface DashboardData {
   llmAvailable: boolean;
   demandSeries: { label: string; value: number }[];
   topRoute: RouteSummary;
-  topRouteFuelPrice: number;
   topRouteRevenue: WhatIfResponse["baseline"]["revenue"];
 }
 
@@ -56,6 +54,7 @@ const PREVIOUS_MONTH = DEFAULT_MONTH === 1 ? 12 : DEFAULT_MONTH - 1;
 const PREVIOUS_YEAR = DEFAULT_MONTH === 1 ? DEFAULT_YEAR - 1 : DEFAULT_YEAR;
 
 export default function ExecutiveDashboardPage() {
+  const router = useRouter();
   const [data, setData] = useState<DashboardData | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -106,7 +105,6 @@ export default function ExecutiveDashboardPage() {
             llmAvailable: health.llm_available,
             demandSeries,
             topRoute,
-            topRouteFuelPrice: topRouteEconomics.cost.fuel_price_usd_per_gallon,
             topRouteRevenue: topRouteEconomics.revenue,
           });
         }
@@ -124,7 +122,7 @@ export default function ExecutiveDashboardPage() {
   if (error) return <ErrorMessage message={error} />;
   if (!data) return <LoadingSpinner />;
 
-  const { routesData, summaries, llmAvailable, demandSeries, topRoute, topRouteFuelPrice, topRouteRevenue } = data;
+  const { routesData, summaries, llmAvailable, demandSeries, topRoute, topRouteRevenue } = data;
 
   const totalRevenue = summaries.reduce((sum, s) => sum + s.current.baseline.revenue.total_revenue_usd, 0);
   const prevTotalRevenue = summaries.reduce((sum, s) => sum + s.previous.baseline.revenue.total_revenue_usd, 0);
@@ -153,8 +151,6 @@ export default function ExecutiveDashboardPage() {
 
   return (
     <div className="flex h-full flex-col gap-4">
-      <AIPromptBar />
-
       <section className="grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-6">
         <KpiCard
           icon="account_balance_wallet"
@@ -203,7 +199,12 @@ export default function ExecutiveDashboardPage() {
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-4">
         <div className="space-y-4 xl:col-span-3">
           <div className="relative">
-            <RouteMap origin={routesData.origin} routes={routesData.routes} selected={null} onSelect={() => {}} />
+            <RouteMap
+              origin={routesData.origin}
+              routes={routesData.routes}
+              selected={null}
+              onSelect={(destination) => router.push(`/routes?dest=${destination}`)}
+            />
             <div className="absolute left-4 top-4 z-10 flex gap-2">
               <div className="flex items-center gap-2 rounded border border-white/10 bg-black/60 px-3 py-1 font-label text-[10px] text-tertiary backdrop-blur-md">
                 <span className="agent-pulse h-2 w-2 rounded-full bg-tertiary" />
@@ -233,12 +234,7 @@ export default function ExecutiveDashboardPage() {
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
             <MiniBarPanel title="Demand forecast · DAD" icon="trending_up" data={demandSeries} />
             <RevenueByCabinPanel destination={topRoute.route.destination} revenue={topRouteRevenue} />
-            <ScenarioQuickSim
-              destination={topRoute.route.destination}
-              year={DEFAULT_YEAR}
-              month={DEFAULT_MONTH}
-              baseFuelPrice={topRouteFuelPrice}
-            />
+            <ScenarioCta destination={topRoute.route.destination} />
           </div>
         </div>
 
@@ -246,8 +242,6 @@ export default function ExecutiveDashboardPage() {
           <AgentStatusPanel llmAvailable={llmAvailable} />
         </div>
       </div>
-
-      <StatusFooter />
     </div>
   );
 }

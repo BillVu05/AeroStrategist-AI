@@ -177,10 +177,6 @@ export default function MarketAnalysisPage() {
           </p>
         </div>
         <div className="flex items-center gap-3">
-          <div className="flex items-center gap-2 rounded border border-tertiary/20 bg-tertiary/10 px-3 py-1.5">
-            <span className="agent-pulse h-1.5 w-1.5 rounded-full bg-tertiary" />
-            <span className="font-label text-[10px] uppercase tracking-widest text-tertiary">96.4% Confidence</span>
-          </div>
           <Link
             href="/copilot?q=Execute+optimal+market+strategy+for+Pacific+Wings+network"
             className="flex items-center gap-2 rounded bg-accent-blue px-4 py-2 font-label text-xs font-medium text-white transition-colors hover:bg-blue-700"

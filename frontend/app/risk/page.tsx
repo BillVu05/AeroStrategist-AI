@@ -2,8 +2,8 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { getMarketContext, getRoutes, getWhatIf } from "@/lib/api";
-import type { MarketContext, RouteInfo, WhatIfResponse } from "@/lib/types";
+import { getMarketContext, getMonteCarlo, getRoutes, getWhatIf } from "@/lib/api";
+import type { MarketContext, MonteCarloResponse, RouteInfo, WhatIfResponse } from "@/lib/types";
 import { DEFAULT_MONTH, DEFAULT_YEAR } from "@/lib/constants";
 import LoadingSpinner from "@/components/LoadingSpinner";
 import ErrorMessage from "@/components/ErrorMessage";
@@ -19,13 +19,6 @@ const STRESS_SCENARIOS: { value: StressScenario; label: string }[] = [
   { value: "recession",        label: "Recession"         },
 ];
 
-const PROBABILITY_DENSITY: Record<StressScenario, number> = {
-  oil_price_surge: 24.3,
-  regional_conflict: 8.7,
-  pandemic: 3.2,
-  recession: 12.1,
-};
-
 interface RouteRisk {
   route: RouteInfo;
   whatIf: WhatIfResponse;
@@ -39,7 +32,8 @@ interface RouteRisk {
 }
 
 interface StressResult {
-  result: WhatIfResponse;
+  result: MonteCarloResponse;
+  baselineProfit: number;
   scenario: StressScenario;
   severity: number;
 }
@@ -149,15 +143,20 @@ export default function RiskIntelligencePage() {
     setStress(null);
     try {
       const baseFuel = base.whatIf.baseline.cost.fuel_price_usd_per_gallon;
-      let params: Record<string, number> = {};
+      // Illustrative severity-to-shock mapping (not fitted to real data) -
+      // shifts the real Monte Carlo fuel-price/fare assumptions to represent
+      // each scenario type, then lets the real fuel/GDP/competitor sampling
+      // (simulation/monte_carlo.py) produce the outcome distribution around
+      // that shock, instead of a single deterministic point estimate.
+      let params: { price_delta_pct?: number; fuel_price_center?: number } = {};
       switch (stressScenario) {
         case "oil_price_surge":
-          params = { fuel_price_usd_per_gallon: baseFuel * (1 + stressSeverity * 0.07) };
+          params = { fuel_price_center: baseFuel * (1 + stressSeverity * 0.07) };
           break;
         case "regional_conflict":
           params = {
             price_delta_pct: -(stressSeverity * 0.04),
-            fuel_price_usd_per_gallon: baseFuel * (1 + stressSeverity * 0.03),
+            fuel_price_center: baseFuel * (1 + stressSeverity * 0.03),
           };
           break;
         case "pandemic":
@@ -167,13 +166,19 @@ export default function RiskIntelligencePage() {
           params = { price_delta_pct: -(stressSeverity * 0.03) };
           break;
       }
-      const result = await getWhatIf({
+      const result = await getMonteCarlo({
         destination: stressRoute,
         year: DEFAULT_YEAR,
         month: DEFAULT_MONTH,
+        n_simulations: 500,
         ...params,
       });
-      setStress({ result, scenario: stressScenario, severity: stressSeverity });
+      setStress({
+        result,
+        baselineProfit: base.whatIf.baseline.profit_usd,
+        scenario: stressScenario,
+        severity: stressSeverity,
+      });
     } finally {
       setRunningStress(false);
     }
@@ -279,7 +284,7 @@ export default function RiskIntelligencePage() {
         </div>
       </div>
 
-      <section className="grid grid-cols-2 gap-4 md:grid-cols-4 lg:grid-cols-8">
+      <section className="grid grid-cols-2 gap-4 md:grid-cols-4 lg:grid-cols-6">
         <KpiCard
           icon="shield"
           label="Network Risk Score"
@@ -321,20 +326,6 @@ export default function RiskIntelligencePage() {
           value={`${stableCount}`}
           delta={`${risks.length} TOTAL`}
           deltaClass="text-tertiary"
-        />
-        <KpiCard
-          icon="thunderstorm"
-          label="Weather Disruptions"
-          value={`${Math.round((1 - avgLoadFactor) * 60 + 20)}%`}
-          delta={avgLoadFactor > 0.85 ? "MONSOON ACTIVE" : "NOMINAL"}
-          deltaClass={avgLoadFactor > 0.85 ? "text-secondary" : "text-tertiary"}
-        />
-        <KpiCard
-          icon="public"
-          label="Geo-Tension Index"
-          value={`${Math.round(avgEconRisk * 72 + 28)}/100`}
-          delta={avgEconRisk > 0.5 ? "ELEVATED" : "STABLE"}
-          deltaClass={avgEconRisk > 0.5 ? "text-error" : "text-tertiary"}
         />
       </section>
 
@@ -413,10 +404,6 @@ export default function RiskIntelligencePage() {
               <h4 className="font-label text-[10px] uppercase tracking-widest text-primary">
                 Stress-Test Simulator
               </h4>
-              <span className="flex items-center gap-1.5 rounded border border-tertiary/20 bg-tertiary/10 px-2 py-0.5 font-label text-[9px] text-tertiary">
-                <span className="agent-pulse h-1 w-1 rounded-full bg-tertiary" />
-                AI AGENT READY
-              </span>
             </div>
             <div className="space-y-3 p-4">
               <div>
@@ -487,50 +474,41 @@ export default function RiskIntelligencePage() {
               </button>
 
               {stress && (() => {
-                const profitDelta = stress.result.delta.profit_usd;
-                const baselineProfit = stress.result.baseline.profit_usd;
-                const ebitdaImpact = baselineProfit !== 0 ? (profitDelta / Math.abs(baselineProfit)) * 100 : 0;
-                const var$ = Math.abs(profitDelta);
-                const probDensity = PROBABILITY_DENSITY[stress.scenario];
+                const medianProfit = stress.result.profit_usd.p50;
+                const baselineProfit = stress.baselineProfit;
+                const profitImpactPct = baselineProfit !== 0 ? ((medianProfit - baselineProfit) / Math.abs(baselineProfit)) * 100 : 0;
                 const scenLabel = STRESS_SCENARIOS.find((s) => s.value === stress.scenario)?.label ?? "";
                 return (
                   <div className="space-y-3">
-                    <div className={`rounded border p-3 ${profitDelta < 0 ? "border-error/20 bg-error/10" : "border-tertiary/20 bg-tertiary/10"}`}>
+                    <div className={`rounded border p-3 ${profitImpactPct < 0 ? "border-error/20 bg-error/10" : "border-tertiary/20 bg-tertiary/10"}`}>
                       <div className="mb-2 font-label text-[10px] uppercase tracking-widest text-on-surface-variant/60">
-                        {scenLabel} · Severity {stress.severity}/10
+                        {scenLabel} · Severity {stress.severity}/10 · {stressDuration}mo horizon assumed · {stress.result.n_simulations} simulations
                       </div>
-                      <div className="grid grid-cols-3 gap-2 text-center">
-                        <div>
-                          <div className="font-label text-[9px] uppercase tracking-widest text-on-surface-variant/50">
-                            EBITDA Impact
-                          </div>
-                          <div className={`font-label text-sm font-bold ${ebitdaImpact < 0 ? "text-error" : "text-tertiary"}`}>
-                            {ebitdaImpact >= 0 ? "+" : ""}{ebitdaImpact.toFixed(1)}%
-                          </div>
+                      <div className="text-center">
+                        <div className="font-label text-[9px] uppercase tracking-widest text-on-surface-variant/50">
+                          Median Profit Impact %
                         </div>
-                        <div>
-                          <div className="font-label text-[9px] uppercase tracking-widest text-on-surface-variant/50">
-                            VaR Estimate
-                          </div>
-                          <div className="font-label text-sm font-bold text-secondary">{fmtUsd(var$)}</div>
-                        </div>
-                        <div>
-                          <div className="font-label text-[9px] uppercase tracking-widest text-on-surface-variant/50">
-                            Prob. Density
-                          </div>
-                          <div className="font-label text-sm font-bold text-on-surface">{probDensity.toFixed(1)}%</div>
+                        <div className={`font-label text-xl font-bold ${profitImpactPct < 0 ? "text-error" : "text-tertiary"}`}>
+                          {profitImpactPct >= 0 ? "+" : ""}{profitImpactPct.toFixed(1)}%
                         </div>
                       </div>
-                      <div className="mt-2 flex items-center justify-between border-t border-white/10 pt-2">
-                        <div className="flex justify-between text-xs">
-                          <span className="text-on-surface-variant">Profit impact</span>
+                      <div className="mt-2 grid grid-cols-2 gap-2 border-t border-white/10 pt-2 text-center">
+                        <div>
+                          <div className="font-label text-[9px] uppercase tracking-widest text-on-surface-variant/50">
+                            P10 – P90 Profit
+                          </div>
+                          <div className="font-label text-xs font-bold text-on-surface">
+                            {fmtUsd(stress.result.profit_usd.p10)} – {fmtUsd(stress.result.profit_usd.p90)}
+                          </div>
                         </div>
-                        <span className={`font-label text-xs font-bold ${profitDelta < 0 ? "text-error" : "text-tertiary"}`}>
-                          {fmtUsd(profitDelta)}
-                        </span>
-                      </div>
-                      <div className="mt-1 font-label text-[8px] uppercase tracking-widest text-on-surface-variant/30">
-                        Monte Carlo Engine V9.4 · {stressDuration}mo horizon
+                        <div>
+                          <div className="font-label text-[9px] uppercase tracking-widest text-on-surface-variant/50">
+                            Probability of Loss
+                          </div>
+                          <div className={`font-label text-xs font-bold ${stress.result.probability_of_loss > 0.2 ? "text-error" : "text-tertiary"}`}>
+                            {(stress.result.probability_of_loss * 100).toFixed(1)}%
+                          </div>
+                        </div>
                       </div>
                     </div>
                   </div>

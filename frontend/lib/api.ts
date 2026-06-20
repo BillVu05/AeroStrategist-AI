@@ -11,8 +11,11 @@ import type {
   MarketContext,
   MonteCarloResponse,
   NetworkFutureAnalysisResponse,
+  ReportRecord,
+  ReportsListResponse,
   RouteEconomicsResponse,
   RoutesResponse,
+  SaveReportRequest,
   ScenarioInput,
   SearchAirportsResponse,
   WhatIfPresets,
@@ -122,6 +125,7 @@ export function getMonteCarlo(params: {
   frequency_delta?: number;
   aircraft_type?: string;
   rating_delta?: number;
+  fuel_price_center?: number;
 }) {
   return getJSON<MonteCarloResponse>("/monte_carlo", params);
 }
@@ -174,4 +178,36 @@ export async function postChat(messages: ChatMessage[]) {
     throw new Error(`API error ${res.status} for /chat: ${body}`);
   }
   return res.json() as Promise<ChatResponse>;
+}
+
+// Strategic Report Library
+
+export function getReports() {
+  return getJSON<ReportsListResponse>("/reports");
+}
+
+export function getReport(id: string) {
+  return getJSON<ReportRecord>(`/reports/${id}`);
+}
+
+export async function saveReport(req: SaveReportRequest) {
+  const res = await fetch(new URL("/reports", BASE_URL), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(req),
+  });
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`API error ${res.status} for /reports: ${body}`);
+  }
+  return res.json() as Promise<ReportRecord>;
+}
+
+export async function deleteReport(id: string) {
+  const res = await fetch(new URL(`/reports/${id}`, BASE_URL), { method: "DELETE" });
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`API error ${res.status} for /reports/${id}: ${body}`);
+  }
+  return res.json() as Promise<{ deleted: string }>;
 }

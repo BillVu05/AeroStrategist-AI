@@ -40,6 +40,7 @@ from future_analysis import (  # noqa: E402
 from open_route_analyst import analyze_open_route, compare_route_alternatives  # noqa: E402
 from open_route_agents import analyze_with_agents  # noqa: E402
 from world_airports import search_airports  # noqa: E402
+from report_store import list_reports, get_report, save_report, delete_report  # noqa: E402
 
 app = FastAPI(
     title="Airline Strategy Simulator API",
@@ -83,6 +84,12 @@ class ChatRequest(BaseModel):
     messages: list[ChatMessage]
 
 
+class ConfidenceBreakdown(BaseModel):
+    bootstrap_uncertainty_deduction: float
+    historical_reliability_deduction: float
+    extrapolation_deduction: float
+
+
 class DemandForecastResponse(BaseModel):
     origin: str
     destination: str
@@ -96,6 +103,9 @@ class DemandForecastResponse(BaseModel):
     predicted_load_factor: float
     predicted_load_factor_low: float
     predicted_load_factor_high: float
+    confidence_pct: float
+    confidence_breakdown: ConfidenceBreakdown
+    confidence_notes: list[str]
 
 
 def _forecast_demand(destination: str, year: int, month: int, avg_fare_usd: float | None) -> dict:
@@ -107,6 +117,7 @@ def _forecast_demand(destination: str, year: int, month: int, avg_fare_usd: floa
     features = _ref.build_features(destination, year, month, avg_fare_usd)
     X = pd.DataFrame([features])[_feature_columns]
     predicted_passengers = float(_model.predict(X)[0])
+    confidence = _engine.confidence_model.score(destination, year, features, X, predicted_passengers)
 
     capacity_monthly = _ref.capacity_monthly(destination)
     predicted_load_factor = predicted_passengers / capacity_monthly
@@ -127,6 +138,7 @@ def _forecast_demand(destination: str, year: int, month: int, avg_fare_usd: floa
         "predicted_load_factor": predicted_load_factor,
         "predicted_load_factor_low": passengers_low / capacity_monthly,
         "predicted_load_factor_high": passengers_high / capacity_monthly,
+        "confidence": confidence,
     }
 
 
@@ -154,6 +166,9 @@ def demand_forecast(
         predicted_load_factor=round(forecast["predicted_load_factor"], 4),
         predicted_load_factor_low=round(forecast["predicted_load_factor_low"], 4),
         predicted_load_factor_high=round(forecast["predicted_load_factor_high"], 4),
+        confidence_pct=forecast["confidence"]["confidence_pct"],
+        confidence_breakdown=forecast["confidence"]["confidence_breakdown"],
+        confidence_notes=forecast["confidence"]["confidence_notes"],
     )
 
 
@@ -184,6 +199,7 @@ def route_economics(
             "predicted_passengers": round(forecast["predicted_passengers"]),
             "capacity_monthly": round(forecast["capacity_monthly"]),
             "predicted_load_factor": round(forecast["predicted_load_factor"], 4),
+            "confidence_pct": forecast["confidence"]["confidence_pct"],
         },
         "revenue": revenue,
         "cost": cost,
@@ -250,6 +266,7 @@ def monte_carlo(
     frequency_delta: int = 0,
     aircraft_type: str | None = None,
     rating_delta: float = 0.0,
+    fuel_price_center: float | None = None,
 ):
     """
     Phase 5 (real-data rebuild): Monte Carlo scenario simulator. Samples fuel
@@ -260,6 +277,10 @@ def monte_carlo(
     percentiles, a profit histogram, and the probability of an overall loss
     - instead of a single point estimate. price_delta_pct/frequency_delta/
     aircraft_type/rating_delta are held fixed across all trials.
+
+    fuel_price_center optionally shifts the real fuel-price distribution's
+    center away from the latest reference price (e.g. for a stress-test
+    scenario), keeping the same real volatility around the new center.
     """
     destination = destination.upper()
     scenario_kwargs = {
@@ -269,7 +290,15 @@ def monte_carlo(
         "rating_delta": rating_delta,
     }
     try:
-        return run_monte_carlo(_engine, destination, year, month, n_simulations=n_simulations, **scenario_kwargs)
+        return run_monte_carlo(
+            _engine,
+            destination,
+            year,
+            month,
+            n_simulations=n_simulations,
+            fuel_price_center=fuel_price_center,
+            **scenario_kwargs,
+        )
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
 
@@ -536,6 +565,54 @@ def search_airports_endpoint(
     """
     results = search_airports(query, limit=limit)
     return {"query": query, "results": results}
+
+
+class SaveReportRequest(BaseModel):
+    kind: str
+    destination: str
+    destination_city: str
+    title: str
+    description: str
+    agents: list[str]
+    payload: dict
+    id: str | None = None
+
+
+@app.get("/reports")
+def reports_list():
+    """Summaries (no payload) for the Strategic Report Library grid, newest first."""
+    return {"reports": list_reports()}
+
+
+@app.get("/reports/{report_id}")
+def reports_get(report_id: str):
+    """Full saved report, including the original analysis payload, for Preview."""
+    record = get_report(report_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="report not found")
+    return record
+
+
+@app.post("/reports")
+def reports_save(req: SaveReportRequest):
+    """
+    Saves a completed analysis into the Strategic Report Library. Called by
+    the frontend right after a /copilot run or an /analyze_route(_agents)
+    run succeeds - this endpoint itself is storage-only and doesn't re-run
+    any analysis.
+
+    Pass `id` to overwrite an existing entry in place (e.g. Open Route's
+    optional agent-enrichment step updating its earlier base-analysis save)
+    rather than creating a duplicate.
+    """
+    return save_report(**req.model_dump())
+
+
+@app.delete("/reports/{report_id}")
+def reports_delete(report_id: str):
+    if not delete_report(report_id):
+        raise HTTPException(status_code=404, detail="report not found")
+    return {"deleted": report_id}
 
 
 @app.get("/health")

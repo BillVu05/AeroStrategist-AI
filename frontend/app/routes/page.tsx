@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
-import { getDemandForecast, getMarketContext, getRoutes, getWhatIf } from "@/lib/api";
-import type { MarketContext, RouteInfo, RoutesResponse, WhatIfResponse } from "@/lib/types";
+import { useSearchParams } from "next/navigation";
+import { getDemandForecast, getFutureAnalysis, getMarketContext, getRoutes, getWhatIf } from "@/lib/api";
+import type { FutureAnalysisResponse, MarketContext, RouteInfo, RoutesResponse, WhatIfResponse } from "@/lib/types";
 import { DEFAULT_MONTH, DEFAULT_YEAR } from "@/lib/constants";
 import LoadingSpinner from "@/components/LoadingSpinner";
 import ErrorMessage from "@/components/ErrorMessage";
@@ -25,7 +26,7 @@ const PREVIOUS_YEAR = DEFAULT_MONTH === 1 ? DEFAULT_YEAR - 1 : DEFAULT_YEAR;
 interface BaseData {
   routesData: RoutesResponse;
   rows: ProfitabilityRow[];
-  candidate: { whatIf: WhatIfResponse; market: MarketContext } | null;
+  candidate: { whatIf: WhatIfResponse; market: MarketContext; projection: FutureAnalysisResponse } | null;
 }
 
 interface SelectedData {
@@ -65,6 +66,17 @@ function downloadCsv(rows: ProfitabilityRow[]) {
 }
 
 export default function RouteExplorerPage() {
+  return (
+    <Suspense fallback={<LoadingSpinner />}>
+      <RouteExplorerPageInner />
+    </Suspense>
+  );
+}
+
+function RouteExplorerPageInner() {
+  const searchParams = useSearchParams();
+  const presetDest = searchParams.get("dest");
+
   const [base, setBase] = useState<BaseData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
@@ -90,13 +102,17 @@ export default function RouteExplorerPage() {
         let candidate: BaseData["candidate"] = null;
         const candidateRow = rows.find((r) => r.route.destination === CANDIDATE_DESTINATION);
         if (candidateRow) {
-          const market = await getMarketContext(CANDIDATE_DESTINATION, DEFAULT_YEAR);
-          candidate = { whatIf: candidateRow.whatIf, market };
+          const [market, projection] = await Promise.all([
+            getMarketContext(CANDIDATE_DESTINATION, DEFAULT_YEAR),
+            getFutureAnalysis(CANDIDATE_DESTINATION, DEFAULT_YEAR, DEFAULT_YEAR + 4),
+          ]);
+          candidate = { whatIf: candidateRow.whatIf, market, projection };
         }
 
         if (!cancelled) {
           setBase({ routesData, rows, candidate });
-          setSelected(routesData.routes[0]?.destination ?? null);
+          const presetValid = presetDest && routesData.routes.some((r) => r.destination === presetDest);
+          setSelected(presetValid ? presetDest : routesData.routes[0]?.destination ?? null);
         }
       } catch (err) {
         if (!cancelled) setError(err instanceof Error ? err.message : String(err));
@@ -107,6 +123,7 @@ export default function RouteExplorerPage() {
     return () => {
       cancelled = true;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -158,10 +175,6 @@ export default function RouteExplorerPage() {
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <div className="flex items-center gap-2 rounded border border-tertiary/20 bg-tertiary/10 px-3 py-1.5">
-            <span className="agent-pulse h-1.5 w-1.5 rounded-full bg-tertiary" />
-            <span className="font-label text-[10px] uppercase tracking-widest text-tertiary">84% Confidence</span>
-          </div>
           <button
             type="button"
             onClick={() => downloadCsv(rows)}
@@ -204,6 +217,7 @@ export default function RouteExplorerPage() {
               destinationCity={candidate.market.destination_city}
               whatIf={candidate.whatIf}
               market={candidate.market}
+              projection={candidate.projection}
             />
           </div>
           <div className="lg:col-span-4">
@@ -213,6 +227,8 @@ export default function RouteExplorerPage() {
                 fuelPriceUsdPerGallon={selectedRow.whatIf.baseline.cost.fuel_price_usd_per_gallon}
                 gdpGrowthPct={selectedData.market.gdp_growth_pct}
                 loadFactor={selectedRow.whatIf.baseline.demand.load_factor}
+                geopoliticalRisk={selectedData.market.geopolitical_risk}
+                currencyRisk={selectedData.market.currency_risk}
               />
             ) : (
               <LoadingSpinner />

@@ -20,7 +20,7 @@ export default function StatusFooter() {
   const host = (process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000").replace(/^https?:\/\//, "");
 
   return (
-    <footer className="mt-4 flex h-8 shrink-0 items-center justify-between border-t border-white/10 bg-black/40 px-4 backdrop-blur-md">
+    <footer className="flex h-8 shrink-0 items-center justify-between border-t border-white/5 bg-black/60 px-6 backdrop-blur-md">
       <div className="flex items-center gap-6">
         <div className="flex items-center gap-2 font-label text-[10px] text-on-surface-variant">
           <span className={`h-1.5 w-1.5 rounded-full ${ok ? "bg-tertiary" : "bg-error"}`} />

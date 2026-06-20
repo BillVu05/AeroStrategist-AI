@@ -3,6 +3,10 @@ interface RiskMatrixPanelProps {
   fuelPriceUsdPerGallon: number;
   gdpGrowthPct: number;
   loadFactor: number;
+  /** 0=low, 1=moderate, 2=elevated, 3=high - real per-country table (agents/open_route_analyst.py) */
+  geopoliticalRisk: number;
+  /** 0=stable, 1=moderate, 2=volatile - real per-country table (agents/open_route_analyst.py) */
+  currencyRisk: number;
 }
 
 function clampPct(value: number) {
@@ -14,17 +18,16 @@ export default function RiskMatrixPanel({
   fuelPriceUsdPerGallon,
   gdpGrowthPct,
   loadFactor,
+  geopoliticalRisk,
+  currencyRisk,
 }: RiskMatrixPanelProps) {
   // Fuel: $1/gal = low risk, $6/gal = high risk.
   const fuelRiskPct = clampPct(((fuelPriceUsdPerGallon - 1) / 5) * 100);
   // GDP growth: 0% = stagnant, 10%+ = strong tailwind.
   const gdpPct = clampPct((gdpGrowthPct / 10) * 100);
   const loadPct = clampPct(loadFactor * 100);
-
-  // Geopolitical stability: higher GDP growth → more stable markets
-  const geoPct = clampPct(Math.max(0, 100 - gdpGrowthPct * 8 - 20));
-  // Weather disruption proxy: seasonal variance based on load factor volatility
-  const weatherPct = clampPct(30 + (1 - loadFactor) * 40);
+  const geoPct = clampPct((geopoliticalRisk / 3) * 100);
+  const currencyPct = clampPct((currencyRisk / 2) * 100);
 
   const gauges = [
     {
@@ -49,18 +52,18 @@ export default function RiskMatrixPanel({
       valueColor: loadPct > 90 ? "text-error" : "text-tertiary",
     },
     {
-      label: "Geopolitical stability",
-      value: `${(100 - geoPct).toFixed(0)}%`,
-      pct: 100 - geoPct,
+      label: "Geopolitical risk",
+      value: ["Low", "Moderate", "Elevated", "High"][geopoliticalRisk] ?? "—",
+      pct: geoPct,
       color: geoPct > 60 ? "bg-error" : geoPct > 35 ? "bg-secondary" : "bg-tertiary",
       valueColor: geoPct > 60 ? "text-error" : geoPct > 35 ? "text-secondary" : "text-tertiary",
     },
     {
-      label: "Weather disruption",
-      value: `${weatherPct.toFixed(0)}%`,
-      pct: weatherPct,
-      color: weatherPct > 60 ? "bg-error" : weatherPct > 35 ? "bg-secondary" : "bg-tertiary",
-      valueColor: weatherPct > 60 ? "text-error" : weatherPct > 35 ? "text-secondary" : "text-tertiary",
+      label: "Currency risk",
+      value: ["Stable", "Moderate", "Volatile"][currencyRisk] ?? "—",
+      pct: currencyPct,
+      color: currencyPct > 60 ? "bg-error" : currencyPct > 30 ? "bg-secondary" : "bg-tertiary",
+      valueColor: currencyPct > 60 ? "text-error" : currencyPct > 30 ? "text-secondary" : "text-tertiary",
     },
   ];
 

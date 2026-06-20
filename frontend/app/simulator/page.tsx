@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { getWhatIf, getWhatIfPresets } from "@/lib/api";
 import type { ScenarioInput, WhatIfPresets, WhatIfResponse } from "@/lib/types";
 import { ALL_DESTINATIONS, DEFAULT_MONTH, DEFAULT_YEAR } from "@/lib/constants";
@@ -10,11 +11,24 @@ import ComparisonCharts from "@/components/ComparisonCharts";
 import MarketShareChart from "@/components/MarketShareChart";
 import MonteCarloPanel from "@/components/MonteCarloPanel";
 import ErrorMessage from "@/components/ErrorMessage";
+import LoadingSpinner from "@/components/LoadingSpinner";
 
 export default function ScenarioSimulatorPage() {
+  return (
+    <Suspense fallback={<LoadingSpinner />}>
+      <ScenarioSimulatorPageInner />
+    </Suspense>
+  );
+}
+
+function ScenarioSimulatorPageInner() {
+  const presetDest = useSearchParams().get("dest");
+  const initialDestination =
+    presetDest && (ALL_DESTINATIONS as readonly string[]).includes(presetDest) ? presetDest : ALL_DESTINATIONS[0];
+
   const [presets, setPresets] = useState<WhatIfPresets>({});
   const [input, setInput] = useState<ScenarioInput>({
-    destination: ALL_DESTINATIONS[0],
+    destination: initialDestination,
     year: DEFAULT_YEAR,
     month: DEFAULT_MONTH,
   });

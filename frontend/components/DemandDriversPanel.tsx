@@ -4,27 +4,53 @@ interface DemandDriversPanelProps {
   market: MarketContext;
 }
 
+const FEATURE_LABELS: Record<string, string> = {
+  distance_km: "Distance",
+  population: "Population",
+  gdp_usd: "GDP",
+  gdp_growth_pct: "GDP growth",
+  tourism_arrivals_baseline: "Tourism",
+  competitor_count: "Competitor count",
+  competitor_avg_fare_usd: "Competitor fares",
+  avg_fare_usd: "Fare",
+  seasonality: "Seasonality (month)",
+};
+
+/** Real per-feature importances from the trained XGBoost demand model
+ * (ml/train_demand_model.py), combining the two month sin/cos encoding
+ * features into one human-readable "Seasonality" entry. */
+function topDemandDrivers(raw: Record<string, number>, limit = 5) {
+  const combined: Record<string, number> = { ...raw };
+  combined.seasonality = (combined.month_sin ?? 0) + (combined.month_cos ?? 0);
+  delete combined.month_sin;
+  delete combined.month_cos;
+
+  const total = Object.values(combined).reduce((sum, v) => sum + v, 0) || 1;
+  return Object.entries(combined)
+    .map(([key, value]) => ({ label: FEATURE_LABELS[key] ?? key, pct: (value / total) * 100 }))
+    .sort((a, b) => b.pct - a.pct)
+    .slice(0, limit);
+}
+
 export default function DemandDriversPanel({ market }: DemandDriversPanelProps) {
   const avgCompetitorRating =
     market.competitors.length > 0
       ? market.competitors.reduce((sum, c) => sum + c.rating, 0) / market.competitors.length
       : null;
 
-  const competitorImpact = market.competitors.length === 0 ? 5 : -market.competitors.length * 1.8;
-  const tourismImpact = Math.min(15, (market.tourism_arrivals_baseline / 1e6) * 1.2);
-  const fxVolatility = -(Math.abs(market.gdp_growth_pct - 3) * 0.8);
+  const modelDrivers = topDemandDrivers(market.demand_feature_importances);
 
   const drivers = [
     {
       icon: "luggage",
-      label: "Tourism Synergy",
-      value: `+${tourismImpact.toFixed(1)}%`,
+      label: "Tourism Arrivals",
+      value: `${(market.tourism_arrivals_baseline / 1e6).toFixed(1)}M/yr`,
       valueClass: "text-tertiary",
       bg: "bg-tertiary/5 border-tertiary/10",
     },
     {
       icon: "trending_up",
-      label: "GDP Outlook",
+      label: "GDP Growth",
       value: `${market.gdp_growth_pct >= 0 ? "+" : ""}${market.gdp_growth_pct.toFixed(1)}%`,
       valueClass: market.gdp_growth_pct >= 0 ? "text-tertiary" : "text-error",
       bg: market.gdp_growth_pct >= 0 ? "bg-tertiary/5 border-tertiary/10" : "bg-error/5 border-error/10",
@@ -32,30 +58,16 @@ export default function DemandDriversPanel({ market }: DemandDriversPanelProps) 
     {
       icon: "groups",
       label: "Population",
-      value: `+${((market.population / 1e6) * 0.05).toFixed(1)}%`,
-      valueClass: "text-tertiary",
-      bg: "bg-tertiary/5 border-tertiary/10",
-    },
-    {
-      icon: "currency_exchange",
-      label: "FX Volatility",
-      value: `${fxVolatility.toFixed(1)}%`,
-      valueClass: Number(fxVolatility) < 0 ? "text-error" : "text-tertiary",
-      bg: Number(fxVolatility) < 0 ? "bg-error/5 border-error/10" : "bg-tertiary/5 border-tertiary/10",
-    },
-    {
-      icon: "event",
-      label: "Major Events",
-      value: "+15.0%",
+      value: `${(market.population / 1e6).toFixed(1)}M`,
       valueClass: "text-tertiary",
       bg: "bg-tertiary/5 border-tertiary/10",
     },
     {
       icon: "groups_2",
       label: "Competitors",
-      value: `${competitorImpact >= 0 ? "+" : ""}${competitorImpact.toFixed(1)}%`,
-      valueClass: competitorImpact >= 0 ? "text-tertiary" : "text-error",
-      bg: competitorImpact >= 0 ? "bg-tertiary/5 border-tertiary/10" : "bg-error/5 border-error/10",
+      value: `${market.competitors.length}`,
+      valueClass: "text-on-surface",
+      bg: "bg-tertiary/5 border-tertiary/10",
     },
   ];
 
@@ -63,7 +75,7 @@ export default function DemandDriversPanel({ market }: DemandDriversPanelProps) 
     <div className="glass-panel rounded-lg p-4">
       <div className="mb-4 flex items-center justify-between">
         <h5 className="font-label text-[10px] uppercase tracking-widest text-primary">
-          AI demand drivers · {market.destination}
+          Demand drivers · {market.destination}
         </h5>
         <span className="material-symbols-outlined text-[16px] text-tertiary">psychology</span>
       </div>
@@ -100,6 +112,23 @@ export default function DemandDriversPanel({ market }: DemandDriversPanelProps) 
           </div>
         </div>
       )}
+
+      <div className="mt-3 border-t border-white/10 pt-3">
+        <div className="font-label text-[9px] uppercase tracking-widest text-on-surface-variant/50 mb-1.5">
+          What the demand model actually learned matters
+        </div>
+        <div className="space-y-1.5">
+          {modelDrivers.map((d) => (
+            <div key={d.label} className="flex items-center gap-2">
+              <span className="font-label text-[10px] w-28 shrink-0 text-on-surface-variant">{d.label}</span>
+              <div className="flex-1 h-1.5 bg-white/10 rounded-full overflow-hidden">
+                <div className="h-full rounded-full bg-tertiary/60" style={{ width: `${d.pct}%` }} />
+              </div>
+              <span className="font-label text-[10px] w-10 text-right text-on-surface-variant">{d.pct.toFixed(0)}%</span>
+            </div>
+          ))}
+        </div>
+      </div>
     </div>
   );
 }

@@ -9,7 +9,7 @@ import ErrorMessage from "@/components/ErrorMessage";
 import KpiCard from "@/components/KpiCard";
 import MiniBarPanel from "@/components/MiniBarPanel";
 import DemandDriversPanel from "@/components/DemandDriversPanel";
-import DemandScenarioPanel from "@/components/DemandScenarioPanel";
+import ScenarioCta from "@/components/ScenarioCta";
 import DemandComparisonTable, { type DemandComparisonRow } from "@/components/DemandComparisonTable";
 
 const YOY_YEAR = DEFAULT_YEAR - 1;
@@ -104,6 +104,7 @@ export default function DemandForecastingPage() {
             avgFareUsd: current.avg_fare_usd,
             loadFactor: current.predicted_load_factor,
             yoyGrowthPct,
+            confidencePct: current.confidence_pct,
           };
         });
 
@@ -250,11 +251,7 @@ export default function DemandForecastingPage() {
         </div>
       )}
 
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-        <div className="lg:col-span-1">
-          <DemandScenarioPanel destination={topGrowthRoute.route.destination} year={DEFAULT_YEAR} month={DEFAULT_MONTH} />
-        </div>
-      </div>
+      <ScenarioCta destination={topGrowthRoute.route.destination} />
     </div>
   );
 }

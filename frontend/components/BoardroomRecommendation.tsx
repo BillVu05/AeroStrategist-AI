@@ -1,11 +1,12 @@
 import Link from "next/link";
-import type { MarketContext, WhatIfResponse } from "@/lib/types";
+import type { FutureAnalysisResponse, MarketContext, WhatIfResponse } from "@/lib/types";
 
 interface BoardroomRecommendationProps {
   destination: string;
   destinationCity: string;
   whatIf: WhatIfResponse;
   market: MarketContext;
+  projection: FutureAnalysisResponse;
 }
 
 function fmtUsd(value: number) {
@@ -21,6 +22,7 @@ export default function BoardroomRecommendation({
   destinationCity,
   whatIf,
   market,
+  projection,
 }: BoardroomRecommendationProps) {
   const { baseline } = whatIf;
   const profit = baseline.profit_usd;
@@ -32,8 +34,6 @@ export default function BoardroomRecommendation({
   const competitorCount = market.competitors.length;
   const competitionLabel = competitorCount === 0 ? "NONE" : competitorCount === 1 ? "LOW" : competitorCount === 2 ? "MEDIUM" : "HIGH";
 
-  const confidence = Math.max(40, Math.min(95, Math.round(55 + margin * 100 + market.gdp_growth_pct)));
-
   const recommendation: "PROCEED" | "CAUTION" | "NO-GO" =
     profit < 0 ? "NO-GO" : margin < 0.1 ? "CAUTION" : "PROCEED";
 
@@ -44,12 +44,12 @@ export default function BoardroomRecommendation({
   }[recommendation];
 
   const sharePct = baseline.market_share.pacific_wings_share * 100;
+  const confidencePct = baseline.demand.confidence_pct;
+  const confidenceColor = confidencePct >= 70 ? "text-tertiary" : confidencePct >= 50 ? "text-secondary" : "text-error";
 
-  const growthRate = Math.max(market.gdp_growth_pct / 100, 0.01);
-  const demandBars = [0, 1, 2, 3, 4].map((i) => Math.pow(1 + growthRate, i));
-  const maxBar = demandBars[demandBars.length - 1];
-
-  const paybackYears = profit > 0 ? (2_000_000 / (profit * 12)).toFixed(1) : "N/A";
+  const projectionYears = Object.keys(projection.yearly).sort();
+  const demandBars = projectionYears.map((y) => projection.yearly[y].annual_passengers);
+  const maxBar = Math.max(...demandBars, 1);
 
   return (
     <div className="glass-panel-active glow-border relative space-y-6 overflow-hidden rounded-lg p-4">
@@ -74,21 +74,22 @@ export default function BoardroomRecommendation({
             {recommendation}
           </span>
           <div className="text-right">
-            <span className="font-label text-[9px] uppercase tracking-widest text-on-surface-variant/50">Confidence</span>
-            <div className="font-label text-xl font-bold text-tertiary leading-tight">{confidence}%</div>
+            <span className="font-label text-[9px] uppercase tracking-widest text-on-surface-variant/50">
+              Forecast confidence
+            </span>
+            <div className={`font-label text-xl font-bold leading-tight ${confidenceColor}`}>{confidencePct}%</div>
           </div>
         </div>
       </div>
 
       {/* Metrics grid */}
-      <div className="grid grid-cols-3 gap-3 sm:grid-cols-6">
+      <div className="grid grid-cols-3 gap-3 sm:grid-cols-5">
         {[
           { label: "Est. Revenue", value: fmtUsd(baseline.revenue.total_revenue_usd), color: "text-primary" },
           { label: "Net Profit", value: fmtUsd(profit), color: profit >= 0 ? "text-tertiary" : "text-error" },
           { label: "Market Share", value: `${sharePct.toFixed(0)}%`, color: "text-on-surface" },
           { label: "Risk Rating", value: riskRating, color: riskColor },
           { label: "Competition", value: competitionLabel, color: "text-on-surface" },
-          { label: "Payback", value: `${paybackYears}y`, color: "text-secondary" },
         ].map(({ label, value, color }) => (
           <div key={label} className="rounded border border-white/5 bg-white/[0.02] p-2.5 text-center">
             <div className="font-label text-[9px] uppercase tracking-wide text-on-surface-variant/60 mb-1">{label}</div>
@@ -117,7 +118,9 @@ export default function BoardroomRecommendation({
 
       <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
         <div className="glass-panel rounded-lg border-l-2 border-tertiary p-4">
-          <div className="mb-2 font-label text-[10px] uppercase tracking-widest text-tertiary">Demand Growth</div>
+          <div className="mb-2 font-label text-[10px] uppercase tracking-widest text-tertiary">
+            Demand Growth · {projection.from_year}–{projection.to_year}
+          </div>
           <div className="mb-2 flex h-16 items-end gap-1">
             {demandBars.map((v, i) => (
               <div
@@ -128,7 +131,9 @@ export default function BoardroomRecommendation({
             ))}
           </div>
           <p className="text-[11px] text-on-surface-variant">
-            +{market.gdp_growth_pct.toFixed(1)}% GDP growth ({market.macro_year})
+            {projection.passenger_cagr_pct !== null
+              ? `${projection.passenger_cagr_pct >= 0 ? "+" : ""}${projection.passenger_cagr_pct.toFixed(1)}% passenger CAGR`
+              : "Projected annual passengers"}
           </p>
         </div>
         <div className="glass-panel rounded-lg border-l-2 border-secondary p-4">
@@ -152,6 +157,21 @@ export default function BoardroomRecommendation({
           <p className="text-[11px] text-on-surface-variant">Projected Pacific Wings share</p>
         </div>
       </div>
+
+      {baseline.demand.confidence_notes.length > 0 && (
+        <div className="border-t border-white/10 pt-3">
+          <div className="mb-1 font-label text-[9px] uppercase tracking-widest text-on-surface-variant/50">
+            Why confidence is reduced
+          </div>
+          <ul className="space-y-0.5">
+            {baseline.demand.confidence_notes.map((note, i) => (
+              <li key={i} className="text-[11px] text-on-surface-variant">
+                • {note}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
     </div>
   );
 }

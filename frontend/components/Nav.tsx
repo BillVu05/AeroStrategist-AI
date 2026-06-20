@@ -12,6 +12,7 @@ const LINKS = [
   { href: "/revenue", label: "Revenue",   icon: "query_stats" },
   { href: "/copilot", label: "AI Agents", icon: "hub"         },
   { href: "/future",  label: "Future",    icon: "rocket_launch" },
+  { href: "/simulator", label: "Simulator", icon: "science"   },
   { href: "/risk",    label: "Risk",      icon: "security"    },
   { href: "/reports", label: "Reports",   icon: "description" },
 ];
@@ -40,7 +41,7 @@ export default function Nav() {
       {/* Nav links */}
       <nav className="flex-1 space-y-1 px-3">
         {LINKS.map((link) => {
-          const active = pathname === link.href;
+          const active = link.href === "/" ? pathname === "/" : pathname.startsWith(link.href);
           return (
             <Link
               key={link.href}

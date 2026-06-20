@@ -1,5 +1,15 @@
 // TypeScript types mirroring the FastAPI response shapes in api/main.py.
 
+// Real confidence score (ml/confidence.py) - combines bootstrap ensemble
+// disagreement, per-route historical reliability, and extrapolation
+// distance from the training data into one 0-100 score. Replaces the
+// fabricated "Confidence %" badges removed during the realism audit.
+export interface ConfidenceBreakdown {
+  bootstrap_uncertainty_deduction: number;
+  historical_reliability_deduction: number;
+  extrapolation_deduction: number;
+}
+
 export interface DemandForecastResponse {
   origin: string;
   destination: string;
@@ -13,6 +23,9 @@ export interface DemandForecastResponse {
   predicted_load_factor: number;
   predicted_load_factor_low: number;
   predicted_load_factor_high: number;
+  confidence_pct: number;
+  confidence_breakdown: ConfidenceBreakdown;
+  confidence_notes: string[];
 }
 
 export interface RevenueBreakdown {
@@ -47,6 +60,7 @@ export interface RouteEconomicsResponse {
     predicted_passengers: number;
     capacity_monthly: number;
     predicted_load_factor: number;
+    confidence_pct: number;
   };
   revenue: RevenueBreakdown;
   cost: CostBreakdown;
@@ -76,6 +90,9 @@ export interface ScenarioDemand {
   passengers_carried: number;
   load_factor: number;
   demand_constrained_by_capacity: boolean;
+  confidence_pct: number;
+  confidence_breakdown: ConfidenceBreakdown;
+  confidence_notes: string[];
 }
 
 export interface MarketShare {
@@ -187,6 +204,12 @@ export interface MarketContext {
   tourism_arrivals_baseline: number;
   tourism_arrivals_snapshot_year: number;
   competitors: Competitor[];
+  /** 0=low, 1=moderate, 2=elevated, 3=high - real per-country table, see agents/open_route_analyst.py */
+  geopolitical_risk: number;
+  /** 0=stable, 1=moderate, 2=volatile - real per-country table, see agents/open_route_analyst.py */
+  currency_risk: number;
+  /** Real XGBoost feature importances from the trained demand model - same across all destinations */
+  demand_feature_importances: Record<string, number>;
 }
 
 // /copilot
@@ -493,6 +516,39 @@ export interface AirportSearchResult {
 export interface SearchAirportsResponse {
   query: string;
   results: AirportSearchResult[];
+}
+
+// /reports - Strategic Report Library persistence
+export type ReportKind = "route_analysis" | "open_route";
+
+export interface ReportSummary {
+  id: string;
+  created_at: string;
+  kind: ReportKind;
+  title: string;
+  description: string;
+  destination: string;
+  destination_city: string;
+  agents: string[];
+}
+
+export interface ReportRecord extends ReportSummary {
+  payload: CopilotResponse | AnalyzeRouteResponse;
+}
+
+export interface ReportsListResponse {
+  reports: ReportSummary[];
+}
+
+export interface SaveReportRequest {
+  kind: ReportKind;
+  destination: string;
+  destination_city: string;
+  title: string;
+  description: string;
+  agents: string[];
+  payload: CopilotResponse | AnalyzeRouteResponse;
+  id?: string;
 }
 
 // Shared form state for the Open Route page.

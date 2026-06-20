@@ -93,6 +93,7 @@ def run_monte_carlo(
     month: int,
     n_simulations: int = DEFAULT_SIMULATIONS,
     seed: int = DEFAULT_SEED,
+    fuel_price_center: float | None = None,
     **scenario_kwargs,
 ) -> dict:
     """Runs `n_simulations` `SimulationEngine.run_scenario` passes with fuel
@@ -103,12 +104,17 @@ def run_monte_carlo(
     `scenario_kwargs` (price_delta_pct, frequency_delta, aircraft_type,
     rating_delta) are held fixed across all trials - only the three
     uncertain inputs above are randomized.
+
+    `fuel_price_center` optionally shifts the real lognormal fuel-price
+    distribution's center away from the latest reference price (e.g. for a
+    "what if fuel costs spike further" stress scenario) while keeping the
+    same real volatility around it. Defaults to the latest reference price.
     """
     n_simulations = max(MIN_SIMULATIONS, min(n_simulations, MAX_SIMULATIONS))
     rng = np.random.default_rng(seed)
 
     route = engine.ref.route(destination)
-    base_fuel_price = latest_fuel_price()
+    base_fuel_price = fuel_price_center if fuel_price_center is not None else latest_fuel_price()
     base_gdp_growth = route["market"]["gdp_growth_pct"]
     alpha3 = COUNTRY_ALPHA2_TO_ALPHA3.get(route["destination_country"])
     gdp_growth_std = GDP_GROWTH_STD_BY_COUNTRY.get(alpha3, DEFAULT_GDP_GROWTH_STD)

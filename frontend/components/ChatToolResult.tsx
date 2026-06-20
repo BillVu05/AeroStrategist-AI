@@ -29,7 +29,7 @@ const MONTH_SHORT = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct"
 // ─── tool-specific renderers ────────────────────────────────────────────────
 
 type SimBaseline = {
-  demand: { passengers_carried: number; load_factor: number };
+  demand: { passengers_carried: number; load_factor: number; confidence_pct: number; confidence_notes: string[] };
   revenue: { total_revenue_usd: number };
   cost: { fuel_cost_usd: number; total_cost_usd: number };
   profit_usd: number;
@@ -49,20 +49,8 @@ function SimulateRouteResult({ args, result }: { args: Record<string, unknown>; 
     const margin = revenue > 0 ? profit / revenue : 0;
     const lf = baseline.demand.load_factor;
     const share = baseline.market_share.pacific_wings_share;
-    const fuelRatio = baseline.cost.total_cost_usd > 0
-      ? baseline.cost.fuel_cost_usd / baseline.cost.total_cost_usd
-      : 0.4;
 
     const hasDelta = Math.abs(delta.profit_usd) > 50;
-
-    const demandScore = Math.round((lf - 0.5) * 80);
-    const revenueScore = Math.round(margin * 80);
-    const marketScore = Math.round((share - 0.15) * 100);
-    const costScore = Math.round((0.45 - fuelRatio) * 80);
-
-    const confidence = Math.max(40, Math.min(95, Math.round(
-      (margin > 0 ? 40 : 20) + (lf * 30) + (Math.max(0, margin) * 80)
-    )));
 
     const verdict = profit > 0 && margin > 0.10 ? "PROCEED"
       : profit > 0 ? "CAUTION"
@@ -74,12 +62,8 @@ function SimulateRouteResult({ args, result }: { args: Record<string, unknown>; 
       ? { bg: "bg-secondary/10", border: "border-secondary/30", text: "text-secondary" }
       : { bg: "bg-error/10", border: "border-error/30", text: "text-error" };
 
-    const factors = [
-      { label: "Demand", score: demandScore },
-      { label: "Revenue", score: revenueScore },
-      { label: "Market", score: marketScore },
-      { label: "Fuel/Cost", score: costScore },
-    ];
+    const confidencePct = baseline.demand.confidence_pct;
+    const confidenceColor = confidencePct >= 70 ? "text-tertiary" : confidencePct >= 50 ? "text-secondary" : "text-error";
 
     return (
       <div className="glass-panel rounded-lg overflow-hidden">
@@ -103,9 +87,7 @@ function SimulateRouteResult({ args, result }: { args: Record<string, unknown>; 
             </div>
             <div className="text-right">
               <div className="font-label text-[9px] uppercase tracking-widest text-on-surface-variant/60">Confidence</div>
-              <div className={`text-2xl font-bold leading-none ${vc.text}`}>
-                {confidence}<span className="text-sm font-normal">%</span>
-              </div>
+              <div className={`text-lg font-bold leading-none ${confidenceColor}`}>{confidencePct}%</div>
             </div>
           </div>
 
@@ -124,29 +106,6 @@ function SimulateRouteResult({ args, result }: { args: Record<string, unknown>; 
             ))}
           </div>
 
-          {/* decision factor bars */}
-          <div className="border-t border-white/10 pt-3 space-y-2">
-            <div className="font-label text-[9px] uppercase tracking-widest text-on-surface-variant/60 mb-1">Decision Factors</div>
-            {factors.map((f) => {
-              const pct = Math.min(Math.abs(f.score) / 40 * 100, 100);
-              const pos = f.score >= 0;
-              return (
-                <div key={f.label} className="flex items-center gap-2">
-                  <span className="font-label text-[10px] w-14 shrink-0 text-on-surface-variant">{f.label}</span>
-                  <div className="flex-1 h-1.5 bg-white/10 rounded-full overflow-hidden">
-                    <div
-                      className={`h-full rounded-full ${pos ? "bg-tertiary/70" : "bg-error/60"}`}
-                      style={{ width: `${pct}%` }}
-                    />
-                  </div>
-                  <span className={`font-label text-[10px] w-8 text-right shrink-0 ${pos ? "text-tertiary" : "text-error"}`}>
-                    {pos ? "+" : ""}{f.score}%
-                  </span>
-                </div>
-              );
-            })}
-          </div>
-
           {/* scenario delta (only if a real scenario was run) */}
           {hasDelta && (
             <div className="border-t border-white/10 pt-3">
@@ -163,6 +122,14 @@ function SimulateRouteResult({ args, result }: { args: Record<string, unknown>; 
                   </div>
                 ))}
               </dl>
+            </div>
+          )}
+
+          {baseline.demand.confidence_notes.length > 0 && (
+            <div className="border-t border-white/10 pt-2">
+              {baseline.demand.confidence_notes.map((note, i) => (
+                <p key={i} className="font-label text-[9px] text-on-surface-variant/60">• {note}</p>
+              ))}
             </div>
           )}
         </div>

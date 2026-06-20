@@ -8,6 +8,7 @@ export interface DemandComparisonRow {
   avgFareUsd: number;
   loadFactor: number;
   yoyGrowthPct: number;
+  confidencePct: number;
 }
 
 interface DemandComparisonTableProps {
@@ -47,6 +48,9 @@ export default function DemandComparisonTable({ rows }: DemandComparisonTablePro
               <th className="px-6 py-3 font-normal" title="80% empirical prediction interval from the demand model's real holdout residuals">
                 80% Range
               </th>
+              <th className="px-6 py-3 font-normal" title="Real confidence score: bootstrap ensemble disagreement + per-route historical reliability + extrapolation distance">
+                Confidence
+              </th>
               <th className="px-6 py-3 font-normal">Avg Fare</th>
               <th className="px-6 py-3 font-normal">Load Factor</th>
               <th className="px-6 py-3 font-normal">YoY Growth</th>
@@ -67,6 +71,13 @@ export default function DemandComparisonTable({ rows }: DemandComparisonTablePro
                   <td className="px-6 py-4 text-on-surface">{Math.round(row.monthlyDemand).toLocaleString()}</td>
                   <td className="px-6 py-4 text-on-surface-variant">
                     {Math.round(row.monthlyDemandLow).toLocaleString()} &ndash; {Math.round(row.monthlyDemandHigh).toLocaleString()}
+                  </td>
+                  <td
+                    className={`px-6 py-4 font-bold ${
+                      row.confidencePct >= 70 ? "text-tertiary" : row.confidencePct >= 50 ? "text-secondary" : "text-error"
+                    }`}
+                  >
+                    {row.confidencePct}%
                   </td>
                   <td className="px-6 py-4 text-on-surface">${row.avgFareUsd.toFixed(0)}</td>
                   <td className="px-6 py-4 text-on-surface">{(row.loadFactor * 100).toFixed(1)}%</td>

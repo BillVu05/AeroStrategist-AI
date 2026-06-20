@@ -4,15 +4,18 @@ import { useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 
 const PAGE_TITLES: Record<string, string> = {
-  "/":          "Executive Intelligence",
-  "/routes":    "Route Intelligence",
-  "/market":    "Market Analysis",
-  "/demand":    "Demand Forecasting",
-  "/revenue":   "Revenue Intelligence",
-  "/copilot":   "AI Strategy Copilot",
-  "/risk":      "Risk Intelligence",
-  "/reports":   "Executive Reports",
-  "/simulator": "Scenario Simulator",
+  "/":            "Executive Intelligence",
+  "/routes":      "Route Intelligence",
+  "/open-route":  "Open Route Analysis",
+  "/market":      "Market Analysis",
+  "/demand":      "Demand Forecasting",
+  "/revenue":     "Revenue Intelligence",
+  "/copilot":     "AI Strategy Copilot",
+  "/future":      "Future Analysis",
+  "/risk":        "Risk Intelligence",
+  "/reports":     "Reports Library",
+  "/reports/new": "New Strategic Analysis",
+  "/simulator":   "Scenario Simulator",
 };
 
 export default function HeaderStatusBar() {
@@ -20,7 +23,9 @@ export default function HeaderStatusBar() {
   const pathname = usePathname();
   const [query, setQuery] = useState("");
 
-  const title = PAGE_TITLES[pathname] ?? "AeroStrategist AI";
+  const title =
+    PAGE_TITLES[pathname] ??
+    (pathname.startsWith("/reports/") ? "Report Preview" : "AeroStrategist AI");
 
   function handleSearch(e: React.FormEvent) {
     e.preventDefault();

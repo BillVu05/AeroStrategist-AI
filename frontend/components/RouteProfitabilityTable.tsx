@@ -67,7 +67,7 @@ export default function RouteProfitabilityTable({ rows, selected, onSelect }: Ro
               <th className="px-6 py-3 font-normal">Revenue</th>
               <th className="px-6 py-3 font-normal">Risk</th>
               <th className="px-6 py-3 font-normal">Net Profit</th>
-              <th className="px-6 py-3 font-normal">AI Recommendation</th>
+              <th className="px-6 py-3 font-normal">Recommendation</th>
               <th className="px-6 py-3" />
             </tr>
           </thead>

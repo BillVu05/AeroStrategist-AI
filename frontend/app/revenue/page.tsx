@@ -10,7 +10,7 @@ import KpiCard from "@/components/KpiCard";
 import TrendLinePanel from "@/components/TrendLinePanel";
 import RevenueCompositionPanel from "@/components/RevenueCompositionPanel";
 import RevenueLeaderboardTable from "@/components/RevenueLeaderboardTable";
-import PricingSimulatorPanel from "@/components/PricingSimulatorPanel";
+import ScenarioCta from "@/components/ScenarioCta";
 import type { ProfitabilityRow } from "@/components/RouteProfitabilityTable";
 
 const PREVIOUS_MONTH = DEFAULT_MONTH === 1 ? 12 : DEFAULT_MONTH - 1;
@@ -223,11 +223,7 @@ export default function RevenueIntelligencePage() {
 
       <RevenueLeaderboardTable rows={rows} />
 
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-        <div className="lg:col-span-1">
-          <PricingSimulatorPanel destination={topRoute.route.destination} year={DEFAULT_YEAR} month={DEFAULT_MONTH} />
-        </div>
-      </div>
+      <ScenarioCta destination={topRoute.route.destination} />
     </div>
   );
 }

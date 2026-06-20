@@ -4,7 +4,8 @@ together.
 
 Given a route/month and a set of scenario deltas (price change, frequency
 change, fuel price, aircraft swap, service rating change), recomputes:
-  - demand (via the Phase 3 XGBoost model)
+  - demand (via the Phase 3 XGBoost model), plus a real confidence score for
+    that demand prediction (ml/confidence.py - realism audit follow-up)
   - passengers actually carried (demand capped by capacity - Pacific Wings'
     own frequency/fleet choice doesn't change market demand, but it does
     change how much of that demand can be served)
@@ -28,6 +29,7 @@ MODELS_DIR = ROOT / "models"
 
 sys.path.insert(0, str(ROOT / "ml"))
 from features import NOTIONAL_CANDIDATE_FREQUENCY, ReferenceData  # noqa: E402
+from confidence import ConfidenceModel  # noqa: E402
 
 from cost import CostModel  # noqa: E402
 from market_share import PACIFIC_WINGS_RATING, MarketShareModel  # noqa: E402
@@ -40,6 +42,7 @@ class SimulationEngine:
         self.cost_model = CostModel()
         self.revenue_model = RevenueModel()
         self.market_share_model = MarketShareModel()
+        self.confidence_model = ConfidenceModel()
 
         self._model = xgb.XGBRegressor()
         self._model.load_model(MODELS_DIR / "demand_model.json")
@@ -86,6 +89,7 @@ class SimulationEngine:
         )
         X = pd.DataFrame([features])[self._feature_columns]
         predicted_passengers = float(self._model.predict(X)[0])
+        confidence = self.confidence_model.score(destination, year, features, X, predicted_passengers)
 
         capacity_monthly = self.ref.capacity_monthly(
             destination, aircraft_type=scenario_aircraft, weekly_frequency=scenario_frequency
@@ -132,6 +136,7 @@ class SimulationEngine:
                 "passengers_carried": round(passengers_carried),
                 "load_factor": round(load_factor, 4),
                 "demand_constrained_by_capacity": predicted_passengers > capacity_monthly,
+                **confidence,
             },
             "revenue": revenue,
             "cost": cost,

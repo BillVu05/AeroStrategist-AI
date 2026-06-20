@@ -7,14 +7,30 @@ re-shapes it into a compact dict for LLM prompts. No new data sources, no
 invented numbers.
 """
 
+import json
 import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "ml"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 from features import ReferenceData  # noqa: E402
 
+# Real per-country geopolitical/currency risk tables - already built for the
+# open-route feature (any worldwide destination); reused here so the 5
+# existing Pacific Wings routes get the same real data instead of the
+# frontend fabricating a GDP-derived proxy (real-data rebuild realism audit).
+from open_route_analyst import _geo_risk, _currency_risk  # noqa: E402
+
 _ref = ReferenceData()
+
+# Real XGBoost feature importances from the trained demand model
+# (ml/train_demand_model.py) - same for every destination (one global
+# model), included here so the frontend can show genuine model-driven
+# demand drivers instead of an invented "impact %" per field.
+_feature_importances: dict[str, float] = json.loads(
+    (ROOT / "models" / "metrics.json").read_text()
+)["feature_importances"]
 
 
 def market_context(destination: str, year: int) -> dict:
@@ -49,4 +65,7 @@ def market_context(destination: str, year: int) -> dict:
         "tourism_arrivals_baseline": route["market"]["tourism_arrivals"],
         "tourism_arrivals_snapshot_year": route["market"]["snapshot_year"],
         "competitors": competitors,
+        "geopolitical_risk": _geo_risk(route["destination_country"]),
+        "currency_risk": _currency_risk(route["destination_country"]),
+        "demand_feature_importances": _feature_importances,
     }

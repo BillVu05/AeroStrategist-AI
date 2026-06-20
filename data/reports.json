@@ -1,0 +1,415 @@
+[
+  {
+    "id": "6619e779-41a9-4735-b67b-ee602352a815",
+    "created_at": "2026-06-20T13:54:40.547882+00:00",
+    "kind": "route_analysis",
+    "title": "SYD \u2192 Melbourne Strategy Analysis",
+    "description": "This scenario presents an unfavorable outlook for Pacific Wings. While both the baseline and scenario report identical profit figures of **$747,770.39** and passenger numbers of **7668**, the introduction of \"New Entrant\u2026",
+    "destination": "MEL",
+    "destination_city": "Melbourne",
+    "agents": [
+      "demand",
+      "finance",
+      "market",
+      "risk",
+      "strategy"
+    ],
+    "payload": {
+      "origin": "SYD",
+      "destination": "MEL",
+      "year": 2024,
+      "month": 6,
+      "scenario": {
+        "avg_fare_usd": 127.16,
+        "weekly_frequency": 14,
+        "aircraft_type": "A320-200",
+        "fuel_price_usd_per_gallon": 2.3,
+        "pacific_wings_rating": 4.1,
+        "tourism_arrivals_multiplier": 1,
+        "extra_competitors": [
+          {
+            "name": "New Entrant Air",
+            "price": 114.44,
+            "weekly_frequency": 14,
+            "rating": 3.9
+          }
+        ]
+      },
+      "demand": {
+        "baseline": {
+          "predicted_demand_passengers": 7668,
+          "capacity_monthly": 9124,
+          "passengers_carried": 7668,
+          "load_factor": 0.8403,
+          "demand_constrained_by_capacity": false,
+          "confidence_pct": 88,
+          "confidence_breakdown": {
+            "bootstrap_uncertainty_deduction": 2.7,
+            "historical_reliability_deduction": 6.8,
+            "extrapolation_deduction": 2.5
+          },
+          "confidence_notes": [
+            "Forecast year 2024 is 1 year(s) outside the model's 2022-2023 training window."
+          ]
+        },
+        "scenario": {
+          "predicted_demand_passengers": 7668,
+          "capacity_monthly": 9124,
+          "passengers_carried": 7668,
+          "load_factor": 0.8403,
+          "demand_constrained_by_capacity": false,
+          "confidence_pct": 83.9,
+          "confidence_breakdown": {
+            "bootstrap_uncertainty_deduction": 2.7,
+            "historical_reliability_deduction": 6.8,
+            "extrapolation_deduction": 6.7
+          },
+          "confidence_notes": [
+            "Forecast year 2024 is 1 year(s) outside the model's 2022-2023 training window.",
+            "competitor_count=4.0 is outside the training range [0.0, 3.0]."
+          ]
+        },
+        "delta": {
+          "passengers_carried": 0,
+          "load_factor": 0
+        },
+        "demand_constrained_by_capacity": false
+      },
+      "finance": {
+        "baseline": {
+          "revenue_usd": 1166715.97,
+          "cost_usd": 418945.58,
+          "profit_usd": 747770.39
+        },
+        "scenario": {
+          "revenue_usd": 1166715.97,
+          "cost_usd": 418945.58,
+          "profit_usd": 747770.39
+        },
+        "delta": {
+          "profit_usd": 0,
+          "revenue_usd": 0,
+          "cost_usd": 0
+        }
+      },
+      "market_analysis": {
+        "available": true,
+        "commentary": "The Sydney-Melbourne route exhibits strong underlying demand, primarily driven by the significant population centres at both ends and the short distance, which makes air travel a convenient option. Australia's modest GDP growth of 1.37% suggests a stable, though not rapidly expanding, economic environment that should support domestic travel.\n\nCompetitively, Pacific Wings (14 weekly frequencies) is a minor player against entrenched incumbents like Qantas (259), Virgin Australia (189), and Jetstar (126), indicating a highly saturated market. Our current offering appears to be a niche service given the overall market size and competitor activity. Future strategy should carefully consider pricing power against Jetstar's very low fares and the strong brand loyalty of the full-service carriers.",
+        "context": {
+          "origin": "SYD",
+          "destination": "MEL",
+          "destination_city": "Melbourne",
+          "destination_country": "AU",
+          "distance_km": 705.6,
+          "flight_duration_hours": 0.85,
+          "current_weekly_frequency": 14,
+          "assigned_aircraft": "A320-200",
+          "macro_year": 2024,
+          "gdp_usd": 1757022451652.83,
+          "gdp_growth_pct": 1.37340773365975,
+          "population": 27196812,
+          "tourism_arrivals_baseline": 9466000,
+          "tourism_arrivals_snapshot_year": 2019,
+          "competitors": [
+            {
+              "name": "Qantas",
+              "weekly_frequency": 259,
+              "avg_fare_usd": 137.76,
+              "rating": 4
+            },
+            {
+              "name": "Virgin Australia",
+              "weekly_frequency": 189,
+              "avg_fare_usd": 83.56,
+              "rating": 4
+            },
+            {
+              "name": "Jetstar",
+              "weekly_frequency": 126,
+              "avg_fare_usd": 27.1,
+              "rating": 3
+            }
+          ],
+          "geopolitical_risk": 0,
+          "currency_risk": 0,
+          "demand_feature_importances": {
+            "distance_km": 0.5569539666175842,
+            "gdp_usd": 0.02393512986600399,
+            "gdp_growth_pct": 0.00571593688800931,
+            "population": 0.37949323654174805,
+            "tourism_arrivals_baseline": 0.005419532302767038,
+            "competitor_count": 0,
+            "competitor_avg_fare_usd": 0.0013008348178118467,
+            "avg_fare_usd": 0.008680318482220173,
+            "month_sin": 0.014642789028584957,
+            "month_cos": 0.0038582682609558105
+          }
+        }
+      },
+      "risk_analysis": {
+        "available": true,
+        "risks": "1. **Competitor Response:** The entry of \"New Entrant Air\" with a lower average fare of USD 114.44 (compared to Pacific Wings' USD 127.16) and a 3.9 rating could significantly erode Pacific Wings' market share by 1.54% and potentially lead to future fare pressures.\n2. **Economic Sensitivity:** With a demand feature importance of 0.379 for population and 0.024 for GDP, and a GDP growth of only 1.37%, any negative shift in these macroeconomic factors could depress demand.\n3. **Demand Volatility and Forecasting Uncertainty:** The demand confidence for the scenario is 83.9%, which is lower than the baseline's 88.0%, partly due to the forecast year being outside the model's training window and the competitor count exceeding the training range."
+      },
+      "strategy": {
+        "available": true,
+        "executive_summary": "This scenario presents an unfavorable outlook for Pacific Wings. While both the baseline and scenario report identical profit figures of **$747,770.39** and passenger numbers of **7668**, the introduction of \"New Entrant Air\" in a highly saturated Sydney-Melbourne market significantly elevates competitive pressure and forecasting uncertainty. The demand confidence has notably decreased to **83.9%** from 88.0% due to an increased competitor count outside the model's training range. Considering the strong underlying demand, modest GDP growth, and the identified risks of competitor response and economic sensitivity, we recommend proceeding with caution."
+      }
+    }
+  },
+  {
+    "id": "b440ab0d-6c8d-457e-9af9-5e081be55737",
+    "created_at": "2026-06-20T14:02:21.100949+00:00",
+    "kind": "open_route",
+    "title": "Johannesburg New Route Feasibility",
+    "description": "The proposed Sydney to Johannesburg route is financially unfavorable and presents significant risks for Pacific Wings. While the route offers a substantial bilateral market of 1,639,186 annual passengers and South Africa\u2026",
+    "destination": "JNB",
+    "destination_city": "Johannesburg",
+    "agents": [
+      "demand",
+      "finance",
+      "market",
+      "risk",
+      "strategy"
+    ],
+    "payload": {
+      "route": {
+        "origin": "SYD",
+        "origin_city": "Sydney",
+        "destination": "JNB",
+        "destination_city": "Johannesburg",
+        "destination_country": "South Africa",
+        "distance_km": 11023.8,
+        "flight_hours": 12.21
+      },
+      "market": {
+        "destination_gdp_usd_billions": 380,
+        "destination_population_millions": 60.1,
+        "destination_tourism_millions_2019": 10.2,
+        "bilateral_market_estimate_annual_pax": 1639186,
+        "bilateral_market_low": 983512,
+        "bilateral_market_high": 2294861,
+        "existing_competitors_estimate": 3,
+        "pacific_wings_market_share_estimate": 11.8
+      },
+      "operations": {
+        "aircraft_type": "B787-9",
+        "aircraft_range_km": 14140,
+        "aircraft_in_range": true,
+        "range_note": "B787-9 has range 14,140 km; route is 11,024 km \u2014 within range.",
+        "total_seats": 236,
+        "weekly_frequency": 9,
+        "monthly_capacity_seats": 9229
+      },
+      "demand_estimate": {
+        "annual_passengers_pacific_wings": 90811,
+        "monthly_passengers": 7568,
+        "load_factor_estimate": 0.82,
+        "confidence_low_annual": 54487,
+        "confidence_high_annual": 127136,
+        "note": "Gravity model estimate \u00b140%; treat as order-of-magnitude for strategic screening."
+      },
+      "financials": {
+        "avg_fare_usd": 616,
+        "fuel_price_usd_per_gallon": 2.4,
+        "monthly_revenue_usd": 4851369,
+        "monthly_cost_usd": 6762479,
+        "monthly_profit_usd": -1911110,
+        "annual_revenue_usd": 58216424,
+        "annual_cost_usd": 81149743,
+        "annual_profit_usd": -22933319,
+        "operating_margin_pct": -39.4,
+        "breakeven_load_factor": 1.189,
+        "note": "Estimates derived from calibrated cost/revenue models; \u00b130% accuracy at this stage."
+      },
+      "risk": {
+        "geopolitical_risk": 1,
+        "currency_risk": 1,
+        "demand_risk": 1,
+        "competition_risk": 1,
+        "financial_risk": 2,
+        "overall_risk_score": 1.15,
+        "risk_scale": "0=low \u00b7 1=moderate \u00b7 2=elevated \u00b7 3=high"
+      },
+      "scoring": {
+        "demand_score": 43,
+        "financial_score": 0,
+        "strategic_score": 41,
+        "composite_score": 25,
+        "score_scale": "0\u2013100, higher is better"
+      },
+      "verdict": "DO NOT PROCEED",
+      "pros": [
+        "Moderate bilateral market: ~1.6M total annual passengers (all carriers).",
+        "Moderate tourism (10.2M arrivals/year) provides leisure demand base.",
+        "Growing economy (GDP $380B) with solid income base.",
+        "Long-haul route (11,024 km) \u2014 higher per-trip revenue; builds premium brand.",
+        "Projected 82% load factor \u2014 strong asset utilisation."
+      ],
+      "cons": [
+        "Estimated loss at launch (9\u00d7/week): $-22.9M/year. Higher frequency or fare needed.",
+        "Very thin/negative margin (-39.4%) \u2014 route is financially fragile.",
+        "High breakeven LF (119%) \u2014 operationally risky, little room for seasonality.",
+        "Moderate competition (3 existing carriers) \u2014 Pacific Wings would enter as challenger."
+      ],
+      "agent_evidence": {
+        "demand": {
+          "bilateral_market_estimate_annual_pax": 1639186,
+          "pacific_wings_market_share_estimate_pct": 11.8,
+          "annual_passengers_pacific_wings": 90811,
+          "load_factor_estimate": 0.82,
+          "confidence_range_annual": [
+            54487,
+            127136
+          ]
+        },
+        "finance": {
+          "annual_revenue_usd": 58216424,
+          "annual_cost_usd": 81149743,
+          "annual_profit_usd": -22933319,
+          "operating_margin_pct": -39.4,
+          "breakeven_load_factor": 1.189
+        },
+        "market": {
+          "available": true,
+          "commentary": "The Sydney to Johannesburg route presents a substantial long-haul opportunity, with an estimated annual bilateral market of approximately 1.6 million passengers. South Africa's considerable population and GDP, coupled with pre-pandemic tourism levels exceeding 10 million, indicate strong underlying demand for travel. However, with an estimated three existing competitors, Pacific Wings would enter a moderately competitive market, aiming for an initial market share of around 11.8%. This suggests the need for a compelling value proposition to capture a significant portion of this large, but not uncontested, market."
+        },
+        "risk": {
+          "available": true,
+          "risks": "The most material risks for the Sydney to Johannesburg route are:\n\n1.  **Elevated Financial Risk:** The route is projected to incur a significant annual loss of -22,933,319 USD, indicating an elevated financial risk.\n2.  **Poor Operating Margin:** The estimated operating margin is a deeply negative -39.4%, which is unsustainable for a commercial airline route.\n3.  **Unrealistic Breakeven Load Factor:** The breakeven load factor is calculated at 1.189, which is impossible as it exceeds 100% capacity."
+        },
+        "strategy": {
+          "available": true,
+          "executive_summary": "The proposed Sydney to Johannesburg route is financially unfavorable and presents significant risks for Pacific Wings. While the route offers a substantial bilateral market of 1,639,186 annual passengers and South Africa's tourism potential is high, our entry would be into a moderately competitive market with three existing players, targeting an initial 11.8% market share and 90,811 annual passengers. The financial projections show a concerning annual loss of -22,933,319 USD, leading to an unsustainable operating margin of -39.4%. Furthermore, the breakeven load factor is an impossible 1.189, highlighting the route's inherent financial unviability. Based on these figures and the elevated financial risks, we recommend not to proceed with this route at this time."
+        }
+      }
+    }
+  },
+  {
+    "id": "6dfaf1e0-ec89-4e21-b498-678e4083c6cf",
+    "created_at": "2026-06-20T14:06:19.783242+00:00",
+    "kind": "open_route",
+    "title": "Ho Chi Minh City New Route Feasibility",
+    "description": "The proposed Sydney to Ho Chi Minh City route is projected to be unfavorable, with an estimated annual profit of -USD 9,252,110 and an operating margin of -22.5%. While the route taps into a significant bilateral market\u2026",
+    "destination": "SGN",
+    "destination_city": "Ho Chi Minh City",
+    "agents": [
+      "demand",
+      "finance",
+      "market",
+      "risk",
+      "strategy"
+    ],
+    "payload": {
+      "route": {
+        "origin": "SYD",
+        "origin_city": "Sydney",
+        "destination": "SGN",
+        "destination_city": "Ho Chi Minh City",
+        "destination_country": "Vietnam",
+        "distance_km": 6846.1,
+        "flight_hours": 7.58
+      },
+      "market": {
+        "destination_gdp_usd_billions": 476,
+        "destination_population_millions": 98.2,
+        "destination_tourism_millions_2019": 18,
+        "bilateral_market_estimate_annual_pax": 3102163,
+        "bilateral_market_low": 1861298,
+        "bilateral_market_high": 4343028,
+        "existing_competitors_estimate": 3,
+        "pacific_wings_market_share_estimate": 11.8
+      },
+      "operations": {
+        "aircraft_type": "B787-9",
+        "aircraft_range_km": 14140,
+        "aircraft_in_range": true,
+        "range_note": "B787-9 has range 14,140 km; route is 6,846 km \u2014 within range.",
+        "total_seats": 236,
+        "weekly_frequency": 9,
+        "monthly_capacity_seats": 9229
+      },
+      "demand_estimate": {
+        "annual_passengers_pacific_wings": 90811,
+        "monthly_passengers": 7568,
+        "load_factor_estimate": 0.82,
+        "confidence_low_annual": 54487,
+        "confidence_high_annual": 127136,
+        "note": "Gravity model estimate \u00b140%; treat as order-of-magnitude for strategic screening."
+      },
+      "financials": {
+        "avg_fare_usd": 428,
+        "fuel_price_usd_per_gallon": 2.4,
+        "monthly_revenue_usd": 3428686,
+        "monthly_cost_usd": 4199696,
+        "monthly_profit_usd": -771009,
+        "annual_revenue_usd": 41144237,
+        "annual_cost_usd": 50396347,
+        "annual_profit_usd": -9252110,
+        "operating_margin_pct": -22.5,
+        "breakeven_load_factor": 1.063,
+        "note": "Estimates derived from calibrated cost/revenue models; \u00b130% accuracy at this stage."
+      },
+      "risk": {
+        "geopolitical_risk": 1,
+        "currency_risk": 1,
+        "demand_risk": 0,
+        "competition_risk": 1,
+        "financial_risk": 2,
+        "overall_risk_score": 0.9,
+        "risk_scale": "0=low \u00b7 1=moderate \u00b7 2=elevated \u00b7 3=high"
+      },
+      "scoring": {
+        "demand_score": 47,
+        "financial_score": 0,
+        "strategic_score": 45,
+        "composite_score": 28,
+        "score_scale": "0\u2013100, higher is better"
+      },
+      "verdict": "DO NOT PROCEED",
+      "pros": [
+        "Large bilateral market: estimated 3.1M total annual passengers (all carriers).",
+        "Moderate tourism (18.0M arrivals/year) provides leisure demand base.",
+        "Growing economy (GDP $476B) with solid income base.",
+        "Medium-haul route (6,846 km) \u2014 good unit economics for the B787-9.",
+        "Projected 82% load factor \u2014 strong asset utilisation."
+      ],
+      "cons": [
+        "Estimated loss at launch (9\u00d7/week): $-9.3M/year. Higher frequency or fare needed.",
+        "Very thin/negative margin (-22.5%) \u2014 route is financially fragile.",
+        "High breakeven LF (106%) \u2014 operationally risky, little room for seasonality.",
+        "Moderate competition (3 existing carriers) \u2014 Pacific Wings would enter as challenger."
+      ],
+      "agent_evidence": {
+        "demand": {
+          "bilateral_market_estimate_annual_pax": 3102163,
+          "pacific_wings_market_share_estimate_pct": 11.8,
+          "annual_passengers_pacific_wings": 90811,
+          "load_factor_estimate": 0.82,
+          "confidence_range_annual": [
+            54487,
+            127136
+          ]
+        },
+        "finance": {
+          "annual_revenue_usd": 41144237,
+          "annual_cost_usd": 50396347,
+          "annual_profit_usd": -9252110,
+          "operating_margin_pct": -22.5,
+          "breakeven_load_factor": 1.063
+        },
+        "market": {
+          "available": true,
+          "commentary": "The Sydney to Ho Chi Minh City route presents an attractive opportunity, tapping into a significant bilateral market with an estimated 3.1 million annual passengers. Ho Chi Minh City's robust population and economy, coupled with strong pre-pandemic tourism numbers, indicate a healthy demand for travel. While there are an estimated three existing competitors, Pacific Wings is projected to secure a respectable 11.8% market share, suggesting a viable entry point into this dynamic Southeast Asian market. The market's potential for growth, evidenced by the high end of the bilateral market estimate, further enhances the route's appeal."
+        },
+        "risk": {
+          "available": true,
+          "risks": "The key risks to launching the Sydney to Ho Chi Minh City route are:\n\n*   **Financial Risk (Elevated Score of 2):** The route is projected to be unprofitable, with an estimated annual loss of USD 9,252,110 and a negative operating margin of -22.5%.\n*   **Breakeven Load Factor:** The breakeven load factor is estimated at 1.063 (106.3%), indicating that the route is not economically viable under current projections, as it requires more passengers than the aircraft can carry to break even.\n*   **Cost Overruns:** Estimated monthly costs of USD 4,199,696 significantly exceed monthly revenues of USD 3,428,686."
+        },
+        "strategy": {
+          "available": true,
+          "executive_summary": "The proposed Sydney to Ho Chi Minh City route is projected to be unfavorable, with an estimated annual profit of -USD 9,252,110 and an operating margin of -22.5%. While the route taps into a significant bilateral market of 3,102,163 annual passengers and Pacific Wings is estimated to achieve an 11.8% market share, the financial outlook is concerning. A critical risk is the breakeven load factor of 1.063, indicating that the route is not economically viable under current projections. Given these substantial financial risks, particularly the projected unprofitability and unsustainable breakeven load factor, we do not recommend proceeding with this route at this time."
+        }
+      }
+    }
+  }
+]

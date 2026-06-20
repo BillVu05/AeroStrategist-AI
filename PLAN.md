@@ -241,6 +241,83 @@ Done:
     (resolves ambiguous cities, multi-turn refinement); this page is the persistent/shareable structured
     workspace it can hand off to.
 
+18. **Frontend realism audit** (3 Explore agents traced every displayed number on every page back to a real
+    API call or a local fabrication; ~30 findings; full plan at `C:\Users\tiend\.claude\plans\recursive-
+    spinning-bunny.md`). **Phase A (frontend-only relabel/remove) — DONE (2026-06-18)**: removed hardcoded
+    fake confidence badges (Routes "84%", Market "96.4%", `BoardroomRecommendation`'s formula-based one,
+    Reports' formula-based one), removed `BoardroomRecommendation`'s invented $2M payback constant,
+    removed `AgentStatusPanel`'s fake rotating SCANNING/CALCULATING status text and fabricated periodic
+    "ALERT" (now shows only the real ONLINE/OFFLINE state), removed `DemandDriversPanel`'s invented impact-%
+    coefficients and hardcoded "Major Events: +15%" (now shows plain real tourism/GDP/population/competitor
+    fields), removed Risk page's hardcoded `PROBABILITY_DENSITY` table + fabricated "Weather Disruptions"/
+    "Geo-Tension Index" KPIs + fake "AI AGENT READY" badge + fake "VaR Estimate"/"Monte Carlo Engine V9.4"
+    text (renamed "EBITDA Impact" to the honest "Profit Impact %"), replaced Reports' fake step-by-step
+    5-agent animation with an honest single-call progress indicator, removed Reports' formula-based
+    "Confidence Score", renamed Reports' mislabeled "Growth Rate...YoY" to "Scenario Δ", and replaced
+    Reports' fully-fake "Recent Intelligence Library" (4 invented historical reports) with an honest empty
+    state, removed `ChatToolResult.tsx`'s fabricated "Decision Factors" bars and Confidence% in
+    `SimulateRouteResult`. Renamed `RouteProfitabilityTable`'s "AI Recommendation" column to
+    "Recommendation" (the underlying threshold logic is real, just mislabeled). Verified: `tsc`/`npm run
+    build` clean throughout, in-browser via Playwright confirming every fake label/animation is gone with
+    zero console errors. Global header chrome (NETWORK LIVE/notification dot/fake avatar) and the Reports
+    Scenario Parameter Matrix (Phase C) were deliberately left untouched in this phase per user decision.
+    **Phase B (replace fabrications with real backend data that already exists) — DONE (2026-06-18)**:
+    Risk page's Stress-Test Simulator now calls the real `/monte_carlo` endpoint instead of one deterministic
+    `/what_if` — added an optional `fuel_price_center` param to `simulation/monte_carlo.py`/the endpoint so
+    scenario severity can shift the real fuel distribution's center while keeping its real volatility, and
+    the result panel shows real `probability_of_loss` and profit percentiles instead of removed fake
+    readouts (verified: Oil Price Surge severity 5/10 on SYD-SIN → -26.3% median profit impact, $-155K to
+    $832K P10-P90, 20% probability of loss). `BoardroomRecommendation`'s synthetic "Demand Growth" chart now
+    plots real `/future_analysis` annual passengers for the candidate route (DAD: +15.2% real passenger CAGR
+    2024-2028) instead of a `Math.pow` curve. `PricingSimulatorPanel`'s fake elasticity formula is now a
+    real %ΔPassengers/%ΔPrice calculation from the already-fetched `/what_if` baseline/scenario (also
+    dropped its "AI" mislabel). `RiskMatrixPanel` (Routes page) now shows real per-country geopolitical/
+    currency risk (added `geopolitical_risk`/`currency_risk` to `/market_context` by reusing
+    `agents/open_route_analyst.py`'s existing real risk tables via `agents/context.py`) instead of a
+    GDP-derived fabrication - also removed its still-fabricated "Weather disruption" gauge, a gap the
+    original Phase A pass missed (same no-real-data-exists reasoning as the Risk page's already-removed
+    Weather KPI). `DemandDriversPanel` now also shows the trained XGBoost model's real feature importances
+    (persisted to `models/metrics.json` alongside Phase 5's cross-validation/residual data, exposed via
+    `/market_context` as `demand_feature_importances`) ranked under a "what the model actually learned
+    matters" section (distance 56%, population 38%, GDP 2%, etc. for SIN). Verified: `tsc`/`npm run build`
+    clean, in-browser via Playwright across Routes/Risk/Revenue/Demand with zero console errors.
+    **Confidence score follow-up — DONE (2026-06-19).** User asked specifically to reintroduce a real
+    "Confidence %" (deliberately skipped as optional in Phase A) by calculating actual forecast reliability
+    rather than fabricating one. New `ml/confidence.py` (`ConfidenceModel`) combines three real signals: (1)
+    a 30-model bootstrap ensemble (`ml/train_demand_model.py` now also trains resample-with-replacement
+    models to `models/bootstrap/`) - prediction spread across the ensemble is a real epistemic-uncertainty
+    signal; (2) per-route historical reliability - residual quantiles split by route instead of pooled
+    across all 5 (added `residual_quantiles_by_route` to `models/metrics.json`), revealing e.g. MEL's
+    forecasts are real-data-confirmed far more reliable than DAD's; (3) extrapolation distance - years
+    outside the 2022-2023 training window plus how far any feature (e.g. an extreme what-if fare override)
+    falls outside the training data's real range (`feature_ranges`/`train_year_min/max`, also persisted).
+    Combination weights are documented as illustrative (no ground-truth "was this forecast right" dataset
+    exists to fit against - same caveat as `market_share.py`'s betas), but every input is real. Wired into
+    both `SimulationEngine.run_scenario` (feeds `/what_if`, `/copilot`, all chat tools) and `/demand_forecast`
+    directly (reusing the engine's already-instantiated `ConfidenceModel` rather than loading the bootstrap
+    ensemble twice). Restored real confidence badges (previously-fabricated ones removed in Phase A) on
+    `BoardroomRecommendation`, `ChatToolResult.tsx`'s `SimulateRouteResult`, and the Reports page's Strategy
+    Agent header, plus a new "Confidence" column on the Demand page's comparison table - verified real
+    per-route spread in-browser (MEL 88% down to DAD 39.1%, matching the known reliability gap). Each surface
+    also shows `confidence_notes` explaining what's reducing the score for that specific forecast.
+    **Phase C (wire the dead Reports sliders to real `/copilot` levers) — DONE (2026-06-19).** Mapped all 4
+    Scenario Parameter Matrix controls to real `/copilot` kwargs: Fuel Price Hedge slider → fetches the real
+    reference fuel price via `/route_economics` and scales it proportionally (the $80-120/Bbl range is a
+    relative hedge index, not a literal crude-to-jet-fuel conversion - documented as such); Fleet Utilization
+    "Max Capacity" → `frequency_delta=+3`; Market Competition "Aggressive"/"Price War" → reuses the existing
+    real `competitor_entry` preset (not a new fabrication), with "Price War" additionally applying a -10%
+    own-price cut; Dynamic Surcharge → `price_delta_pct`, combining additively with the Price War price cut
+    (confirmed via the backend already supporting `preset` + manual `price_delta_pct` together). Matrix only
+    applies when no top-level Scenario Preset is selected - mirrors `ScenarioForm.tsx`'s existing precedent
+    (preset wins over manual deltas) and is enforced at the read site (a `<fieldset disabled>`), not just
+    visually, so stale slider state can never silently leak into a preset-driven run. Verified end-to-end
+    in-browser: baseline matrix defaults → $811K profit; pushing fuel hedge to $120/Bbl + Max Capacity +
+    Price War + +20% surcharge → **-$319K** (a real $1.1M swing in cost alone, from real fuel and frequency
+    changes) - and confirmed the disabled state correctly greys out when a preset is chosen.
+
+**All three realism-audit phases plus the confidence-score follow-up are now complete.**
+
 Next:
-- All 5 real-data rebuild phases are complete (see item 16), and all 12 original phases are complete.
-  AWS/Prometheus/Grafana remain optional stretch goals, not required for the portfolio demo.
+- All 5 real-data rebuild phases, all 12 original phases, and the full 3-phase realism audit (plus the
+  confidence-score follow-up, see item 18) are complete. AWS/Prometheus/Grafana remain optional stretch
+  goals, not required for the portfolio demo.

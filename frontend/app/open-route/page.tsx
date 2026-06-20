@@ -1,8 +1,9 @@
 "use client";
 
 import { useState } from "react";
-import { getAnalyzeRoute, getAnalyzeRouteAgents, getCompareRoutes } from "@/lib/api";
-import type { AnalyzeRouteResponse, CompareRoutesResponse, OpenRouteFormValue } from "@/lib/types";
+import Link from "next/link";
+import { getAnalyzeRoute, getAnalyzeRouteAgents, getCompareRoutes, saveReport } from "@/lib/api";
+import type { AnalyzeRouteResponse, CompareRoutesResponse, OpenRouteFormValue, SaveReportRequest } from "@/lib/types";
 import OpenRouteForm from "@/components/OpenRouteForm";
 import { RouteAnalysisReport, RouteComparisonList } from "@/components/RouteAnalysisCard";
 import ErrorMessage from "@/components/ErrorMessage";
@@ -15,6 +16,29 @@ const DEFAULT_FORM: OpenRouteFormValue = {
 
 type Mode = "single" | "compare";
 
+function buildSaveRequest(result: AnalyzeRouteResponse, id?: string): SaveReportRequest {
+  const agents = ["demand", "finance"];
+  if (result.agent_evidence?.market) agents.push("market");
+  if (result.agent_evidence?.risk) agents.push("risk");
+  if (result.agent_evidence?.strategy) agents.push("strategy");
+
+  const summary = result.agent_evidence?.strategy?.available
+    ? result.agent_evidence.strategy.executive_summary
+    : `${result.verdict}${result.pros?.[0] ? ` — ${result.pros[0]}` : ""}`;
+  const description = summary.length > 220 ? `${summary.slice(0, 220).trimEnd()}…` : summary;
+
+  return {
+    kind: "open_route",
+    destination: result.route.destination,
+    destination_city: result.route.destination_city,
+    title: `${result.route.destination_city} New Route Feasibility`,
+    description,
+    agents,
+    payload: result,
+    id,
+  };
+}
+
 export default function OpenRoutePage() {
   const [form, setForm] = useState<OpenRouteFormValue>(DEFAULT_FORM);
   const [comparisonList, setComparisonList] = useState<string[]>([]);
@@ -25,6 +49,7 @@ export default function OpenRoutePage() {
   const [agentLoading, setAgentLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [suggestions, setSuggestions] = useState<{ iata: string; city: string; country: string }[]>([]);
+  const [savedReportId, setSavedReportId] = useState<string | null>(null);
 
   function addToComparison() {
     const dest = form.destination.trim().toUpperCase();
@@ -41,6 +66,7 @@ export default function OpenRoutePage() {
     setLoading(true);
     setError(null);
     setSuggestions([]);
+    setSavedReportId(null);
     try {
       const res = await getAnalyzeRoute(form);
       if (res.error) {
@@ -50,6 +76,12 @@ export default function OpenRoutePage() {
       } else {
         setSingleResult(res);
         setMode("single");
+        try {
+          const saved = await saveReport(buildSaveRequest(res));
+          setSavedReportId(saved.id);
+        } catch {
+          // Library save failing shouldn't hide the analysis the user just ran.
+        }
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -81,7 +113,17 @@ export default function OpenRoutePage() {
     setAgentLoading(true);
     try {
       const res = await getAnalyzeRouteAgents(form);
-      setSingleResult({ ...singleResult, agent_evidence: res.agent_evidence });
+      const merged = { ...singleResult, agent_evidence: res.agent_evidence };
+      setSingleResult(merged);
+      try {
+        // Upserts the same library entry created in analyze() rather than
+        // creating a duplicate - this is an enrichment of one analysis, not
+        // a second one.
+        const saved = await saveReport(buildSaveRequest(merged, savedReportId ?? undefined));
+        setSavedReportId(saved.id);
+      } catch {
+        // Library save failing shouldn't hide the analysis the user just ran.
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -138,6 +180,15 @@ export default function OpenRoutePage() {
 
       {!loading && mode === "single" && singleResult && (
         <div className="space-y-3">
+          {savedReportId && (
+            <div className="flex items-center gap-2 rounded border border-tertiary/20 bg-tertiary/10 px-4 py-2.5">
+              <span className="material-symbols-outlined text-[16px] text-tertiary">check_circle</span>
+              <span className="font-label text-[11px] text-tertiary">Saved to Report Library</span>
+              <Link href={`/reports/${savedReportId}`} className="ml-auto font-label text-[11px] text-tertiary underline hover:no-underline">
+                View saved report →
+              </Link>
+            </div>
+          )}
           <RouteAnalysisReport result={singleResult} />
           {!singleResult.agent_evidence && (
             <button

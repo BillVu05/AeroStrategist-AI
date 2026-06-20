@@ -20,13 +20,32 @@ headline split, both also written to models/metrics.json:
     /demand_forecast (a residual-bootstrap-style band: point forecast plus
     the historical 10th/90th percentile error, not a model-based interval).
 
+The realism audit's confidence-score follow-up adds three more artifacts,
+all consumed by ml/confidence.py (see that module for how they combine):
+  - a bootstrap ensemble (models/bootstrap/model_*.json) - N_BOOTSTRAP
+    models, each trained on a resample-with-replacement of the same
+    training rows, so the SPREAD of their predictions on a given forecast
+    estimates how sensitive the model is to exactly which training data it
+    saw (epistemic uncertainty) - distinct from the residual quantiles
+    above, which capture historical real-world noise (aleatoric).
+  - per-route residual quantiles - the existing residual_quantiles are
+    pooled across all 5 routes' holdout rows; splitting by route is more
+    honest, since the 5-fold CV already showed error behaves very
+    differently by route (DAD's tiny passenger counts inflate relative
+    error). Only 12 holdout rows per route, so treat these as rough.
+  - feature_ranges (min/max per feature in the training data) and
+    train_year_min/max - lets a caller flag when a forecast request
+    extrapolates beyond what the model was actually trained on.
+
 Usage:
     python ml/train_demand_model.py
 
 Outputs:
     models/demand_model.json     XGBoost model (native format)
     models/feature_columns.json  Ordered feature column names
-    models/metrics.json          Holdout metrics, cross-validation, residual quantiles
+    models/metrics.json          Holdout metrics, cross-validation, residual quantiles,
+                                  per-route residual quantiles, feature ranges
+    models/bootstrap/model_*.json  Bootstrap ensemble for confidence scoring
 """
 
 import json
@@ -44,6 +63,7 @@ from features import FEATURE_COLUMNS, ReferenceData
 
 ROOT = Path(__file__).resolve().parents[1]
 MODELS_DIR = ROOT / "models"
+BOOTSTRAP_DIR = MODELS_DIR / "bootstrap"
 
 DATABASE_URL = os.environ.get(
     "DATABASE_URL", "postgresql+psycopg2://airline:airline@localhost:5432/airline_sim"
@@ -52,6 +72,7 @@ DATABASE_URL = os.environ.get(
 TEST_YEAR = 2024
 N_CV_FOLDS = 5
 CV_RANDOM_STATE = 42
+N_BOOTSTRAP = 30
 
 MODEL_PARAMS = dict(
     n_estimators=150,
@@ -86,6 +107,51 @@ def cross_validate(X: pd.DataFrame, y: pd.Series) -> dict:
             for metric, values in fold_metrics.items()
             for stat in ("mean", "std")
         },
+    }
+
+
+def train_bootstrap_ensemble(X_train: pd.DataFrame, y_train: pd.Series) -> None:
+    """Trains N_BOOTSTRAP models, each on a resample-with-replacement of the
+    training rows, and saves them to models/bootstrap/. Used at inference
+    time (ml/confidence.py) - the spread of their predictions on a given
+    forecast is an epistemic-uncertainty signal: how much the prediction
+    would have changed had training sampled slightly different rows."""
+    BOOTSTRAP_DIR.mkdir(parents=True, exist_ok=True)
+    for old in BOOTSTRAP_DIR.glob("model_*.json"):
+        old.unlink()
+
+    rng = np.random.default_rng(CV_RANDOM_STATE)
+    n = len(X_train)
+    for i in range(N_BOOTSTRAP):
+        idx = rng.integers(0, n, size=n)
+        model = xgb.XGBRegressor(**{**MODEL_PARAMS, "random_state": MODEL_PARAMS["random_state"] + i})
+        model.fit(X_train.iloc[idx], y_train.iloc[idx])
+        model.save_model(BOOTSTRAP_DIR / f"model_{i}.json")
+
+
+def per_route_residual_quantiles(destinations: pd.Series, y_test: pd.Series, pred: np.ndarray) -> dict:
+    """Residual quantiles split by destination, instead of pooled across all
+    routes - rough (only ~12 holdout rows per route) but more honest, since
+    error behaves very differently by route (see module docstring)."""
+    by_route = {}
+    for dest in destinations.unique():
+        mask = (destinations == dest).to_numpy()
+        residuals = (y_test.to_numpy()[mask] - pred[mask])
+        if len(residuals) == 0:
+            continue
+        by_route[dest] = {
+            f"p{q}": float(np.percentile(residuals, q)) for q in (10, 25, 50, 75, 90)
+        }
+    return by_route
+
+
+def compute_feature_ranges(X_train: pd.DataFrame) -> dict:
+    """Per-feature min/max observed in training - lets a caller flag when a
+    forecast request (e.g. an extreme what-if fare override) extrapolates
+    beyond the feature space the model was actually trained on."""
+    return {
+        col: {"min": float(X_train[col].min()), "max": float(X_train[col].max())}
+        for col in X_train.columns
     }
 
 
@@ -124,6 +190,14 @@ def main() -> None:
     residual_quantiles = {
         f"p{q}": float(np.percentile(residuals, q)) for q in (10, 25, 50, 75, 90)
     }
+    residual_quantiles_by_route = per_route_residual_quantiles(
+        obs.loc[~train_mask, "destination"], y_test, pred
+    )
+
+    importances = dict(zip(FEATURE_COLUMNS, model.feature_importances_.astype(float)))
+
+    print(f"\nTraining {N_BOOTSTRAP}-model bootstrap ensemble for confidence scoring...")
+    train_bootstrap_ensemble(X_train, y_train)
 
     metrics = {
         "test_year": TEST_YEAR,
@@ -134,9 +208,13 @@ def main() -> None:
         "r2": float(r2_score(y_test, pred)),
         "cross_validation": cross_validate(X, y),
         "residual_quantiles": residual_quantiles,
+        "residual_quantiles_by_route": residual_quantiles_by_route,
+        "feature_importances": importances,
+        "feature_ranges": compute_feature_ranges(X_train),
+        "train_year_min": int(obs.loc[train_mask, "year"].min()),
+        "train_year_max": int(obs.loc[train_mask, "year"].max()),
+        "n_bootstrap": N_BOOTSTRAP,
     }
-
-    importances = dict(zip(FEATURE_COLUMNS, model.feature_importances_.astype(float)))
 
     MODELS_DIR.mkdir(exist_ok=True)
     model.save_model(MODELS_DIR / "demand_model.json")
@@ -153,6 +231,10 @@ def main() -> None:
     print(f"  MAPE: {cv['mape_mean']:.2%} +/- {cv['mape_std']:.2%}")
     print(f"  R2:   {cv['r2_mean']:.3f} +/- {cv['r2_std']:.3f}")
     print(f"\nHoldout residual quantiles (passengers, actual - predicted): {residual_quantiles}")
+    print("Per-route (rough, ~12 holdout rows each):")
+    for dest, rq in residual_quantiles_by_route.items():
+        print(f"  {dest}: p10={rq['p10']:.0f} p50={rq['p50']:.0f} p90={rq['p90']:.0f}")
+    print(f"\nBootstrap ensemble: {N_BOOTSTRAP} models saved to {BOOTSTRAP_DIR}")
     print("\nFeature importances:")
     for name, importance in sorted(importances.items(), key=lambda kv: -kv[1]):
         print(f"  {name:28s} {importance:.3f}")

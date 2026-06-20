@@ -90,6 +90,30 @@ brings real noise - this isn't model error.
   real holdout's 10th/90th percentile error, clamped to `[0, capacity]`.
   Not a model-based interval (no quantile regression) - just the actual
   historical error distribution.
+- **Confidence score** (`ml/confidence.py`, every `confidence_pct` shown in
+  the frontend) replaces the fabricated "Confidence %" badges removed
+  during the realism audit. Real-derived, combining three signals:
+  - *Bootstrap ensemble disagreement* - `ml/train_demand_model.py` also
+    trains 30 models, each on a resample-with-replacement of the training
+    rows; the spread of their predictions on a given forecast is a real
+    epistemic-uncertainty signal (how sensitive the answer is to exactly
+    which training rows the model happened to see).
+  - *Per-route historical reliability* - the residual quantiles above,
+    split by route instead of pooled. Only ~12 holdout rows per route, so
+    treat as rough, but real: e.g. MEL's real holdout residuals are far
+    tighter than DAD's, matching the CV finding above.
+  - *Extrapolation distance* - how many years the request falls outside
+    the 2022-2023 training window, and how far any input feature (e.g. an
+    extreme what-if fare override) falls outside the range actually seen
+    in training.
+  The three signals are combined with documented, illustrative weights
+  (not fitted to any ground truth - no labeled "was this forecast right"
+  dataset exists, since Pacific Wings isn't real) - same honesty caveat as
+  `simulation/market_share.py`'s betas. What's real is every input: the
+  bootstrap spread, the historical residuals, and the training data's
+  actual year/feature ranges. `confidence_notes` surfaces which specific
+  factor (if any) is reducing the score, e.g. "Forecast year 2026 is 3
+  year(s) outside the model's 2022-2023 training window."
 
 ## Market share model (`simulation/market_share.py`)
 
