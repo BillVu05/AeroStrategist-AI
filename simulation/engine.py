@@ -28,10 +28,11 @@ ROOT = Path(__file__).resolve().parents[1]
 MODELS_DIR = ROOT / "models"
 
 sys.path.insert(0, str(ROOT / "ml"))
-from features import NOTIONAL_CANDIDATE_FREQUENCY, ReferenceData  # noqa: E402
+from features import COUNTRY_ALPHA2_TO_ALPHA3, NOTIONAL_CANDIDATE_FREQUENCY, ReferenceData  # noqa: E402
 from confidence import ConfidenceModel  # noqa: E402
 
 from cost import CostModel  # noqa: E402
+from macro_projections import project_market_size  # noqa: E402
 from market_share import PACIFIC_WINGS_RATING, MarketShareModel  # noqa: E402
 from revenue import RevenueModel  # noqa: E402
 
@@ -47,6 +48,35 @@ class SimulationEngine:
         self._model = xgb.XGBRegressor()
         self._model.load_model(MODELS_DIR / "demand_model.json")
         self._feature_columns = json.loads((MODELS_DIR / "feature_columns.json").read_text())
+
+        # Gradient-boosted trees cannot extrapolate: macro features beyond
+        # the training range (2023-2024) land in the same leaves, so raw
+        # predictions for future years are flat. Market growth after the
+        # last training year is therefore applied as an explicit multiplier
+        # from macro_projections (IMF WEO long-run GDP x IATA income
+        # elasticity of 1.5, blended with pre-COVID tourism CAGR).
+        self._growth_anchor_year = self.confidence_model.train_year_max
+        self._growth_cache: dict[tuple[str, int], float] = {}
+
+    def market_growth_multiplier(self, destination: str, year: int) -> float:
+        """Total-addressable-market growth since the model's last training
+        year (1.0 for years inside the training window)."""
+        if year <= self._growth_anchor_year:
+            return 1.0
+        key = (destination, year)
+        if key not in self._growth_cache:
+            route = self.ref.route(destination)
+            alpha3 = COUNTRY_ALPHA2_TO_ALPHA3[route["destination_country"]]
+            market = project_market_size(
+                alpha3,
+                float(route["market"]["tourism_arrivals"]),
+                int(route["market"]["snapshot_year"]),
+                self._growth_anchor_year,
+                year,
+            )
+            for y, m in market.items():
+                self._growth_cache[(destination, y)] = m["demand_multiplier"]
+        return self._growth_cache[key]
 
     def run_scenario(
         self,
@@ -91,10 +121,11 @@ class SimulationEngine:
         X = pd.DataFrame([features])[self._feature_columns]
         predicted_passengers = float(self._model.predict(X)[0])
         confidence = self.confidence_model.score(destination, year, features, X, predicted_passengers)
-        # Monte Carlo hook: perturbs the point prediction by real holdout
-        # residual spread (simulation/monte_carlo.py). Applied AFTER
+        # Market growth extrapolation (see __init__) and the Monte Carlo
+        # noise hook (simulation/monte_carlo.py) are both applied AFTER
         # confidence scoring, which describes the model's own prediction.
-        predicted_passengers *= demand_noise_multiplier
+        growth_multiplier = self.market_growth_multiplier(destination, year)
+        predicted_passengers *= growth_multiplier * demand_noise_multiplier
 
         capacity_monthly = self.ref.capacity_monthly(
             destination, aircraft_type=scenario_aircraft, weekly_frequency=scenario_frequency
@@ -137,6 +168,7 @@ class SimulationEngine:
             },
             "demand": {
                 "predicted_demand_passengers": round(predicted_passengers),
+                "market_growth_multiplier": round(growth_multiplier, 4),
                 "capacity_monthly": round(capacity_monthly),
                 "passengers_carried": round(passengers_carried),
                 "load_factor": round(load_factor, 4),

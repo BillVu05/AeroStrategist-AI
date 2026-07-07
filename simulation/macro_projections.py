@@ -10,6 +10,22 @@ mathematical models calibrated on historical data from data/reference/:
 
 All outputs are deterministic point estimates (no Monte Carlo). Use the
 simulation engine's scenario_kwargs for uncertainty exploration.
+
+The demand_multiplier produced here is what SimulationEngine applies to
+passenger predictions beyond the model's training window (tree models can't
+extrapolate — see engine.py). Sources for the constants:
+  - Long-run GDP growth: IMF World Economic Outlook potential-growth
+    estimates per country (https://www.imf.org/en/publications/weo).
+  - Income elasticity 1.5: IATA economics briefing "Air Travel Demand"
+    (long-haul / developing-market elasticity range 1.2-2.0).
+  - Tourism CAGR: World Bank/UNWTO arrivals data in
+    data/reference/macro_indicators.csv, pre-COVID 2015-2019 structural
+    trend, clamped to [1%, 15%].
+  - Sanity check: IATA reported Asia-Pacific international traffic +10.9%
+    in 2025, the fastest of any region
+    (https://www.iata.org/en/pressroom/2026-releases/2026-01-29-02/), and
+    projects global pax to exceed 12B by 2030 led by Asia-Pacific — the
+    ~3-11%/yr per-market multipliers produced here sit inside that band.
 """
 
 import math

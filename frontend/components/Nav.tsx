@@ -4,17 +4,12 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 
 const LINKS = [
-  { href: "/",        label: "Dashboard", icon: "dashboard"   },
-  { href: "/routes",  label: "Routes",    icon: "map"         },
-  { href: "/open-route", label: "Open Route", icon: "explore" },
-  { href: "/market",  label: "Market",    icon: "insights"    },
-  { href: "/demand",  label: "Demand",    icon: "trending_up" },
-  { href: "/revenue", label: "Revenue",   icon: "query_stats" },
-  { href: "/copilot", label: "AI Agents", icon: "hub"         },
-  { href: "/future",  label: "Future",    icon: "rocket_launch" },
-  { href: "/simulator", label: "Simulator", icon: "science"   },
-  { href: "/risk",    label: "Risk",      icon: "security"    },
-  { href: "/reports", label: "Reports",   icon: "description" },
+  { href: "/",             label: "Dashboard",       icon: "dashboard" },
+  { href: "/routes",       label: "Route Explorer",  icon: "map"       },
+  { href: "/market",       label: "Market & Demand", icon: "insights"  },
+  { href: "/scenario-lab", label: "Scenario Lab",    icon: "science"   },
+  { href: "/copilot",      label: "AI Copilot",      icon: "smart_toy" },
+  { href: "/reports",      label: "Report Library",  icon: "analytics" },
 ];
 
 export default function Nav() {

@@ -1,6 +1,6 @@
 "use client";
 
-import { ALL_DESTINATIONS, AIRCRAFT_TYPES, MONTH_NAMES } from "@/lib/constants";
+import { ALL_DESTINATIONS, AIRCRAFT_TYPES, DEFAULT_MONTH, DEFAULT_YEAR, MONTH_NAMES } from "@/lib/constants";
 import type { ScenarioInput, WhatIfPresets } from "@/lib/types";
 
 interface ScenarioFormProps {
@@ -61,10 +61,23 @@ export default function ScenarioForm({
           </span>
           <input
             type="number"
+            min={DEFAULT_YEAR}
             className={FIELD_CLASS}
             value={value.year}
-            onChange={(e) => set("year", Number(e.target.value))}
+            onChange={(e) => {
+              const year = Number(e.target.value);
+              // Scenarios model the future only: entering the current year
+              // bumps a now-past month up to the current month.
+              onChange({
+                ...value,
+                year,
+                month: year <= DEFAULT_YEAR && value.month < DEFAULT_MONTH ? DEFAULT_MONTH : value.month,
+              });
+            }}
           />
+          <span className="mt-1 block font-label text-[9px] text-on-surface-variant/60">
+            {DEFAULT_YEAR} or later — scenarios analyse the future
+          </span>
         </label>
 
         <label className="text-sm">
@@ -77,7 +90,12 @@ export default function ScenarioForm({
             onChange={(e) => set("month", Number(e.target.value))}
           >
             {MONTH_NAMES.map((name, i) => (
-              <option key={name} value={i + 1} className="bg-surface-container text-on-surface">
+              <option
+                key={name}
+                value={i + 1}
+                disabled={value.year <= DEFAULT_YEAR && i + 1 < DEFAULT_MONTH}
+                className="bg-surface-container text-on-surface"
+              >
                 {name}
               </option>
             ))}

@@ -77,7 +77,7 @@ function ReportCard({ report }: { report: ReportSummary }) {
 function InitiateAnalysisCard() {
   return (
     <Link
-      href="/reports/new"
+      href="/copilot"
       className="glass-panel group flex min-h-[260px] flex-col items-center justify-center gap-4 rounded-xl border-dashed border-white/10 p-8 transition-all hover:border-tertiary/50 hover:bg-white/5"
     >
       <div className="flex h-12 w-12 items-center justify-center rounded-full bg-white/5 transition-all group-hover:scale-110 group-hover:bg-tertiary/20">
@@ -138,7 +138,7 @@ export default function ReportsLibraryPage() {
           </div>
         </div>
         <Link
-          href="/reports/new"
+          href="/copilot"
           className="flex items-center gap-2 rounded bg-accent-blue px-4 py-2 font-label text-xs font-medium text-white transition-colors hover:bg-blue-700"
         >
           <span className="material-symbols-outlined text-[18px]">add_circle</span>

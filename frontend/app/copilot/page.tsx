@@ -2,15 +2,17 @@
 
 import { Suspense, useEffect, useRef, useState } from "react";
 import type { ComponentPropsWithoutRef } from "react";
+import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { getHealth, postChat } from "@/lib/api";
-import type { ChatMessage, ChatToolCall } from "@/lib/types";
-import { EXAMPLE_QUESTIONS } from "@/lib/constants";
+import { getCopilot, getHealth, getRoutes, getWhatIfPresets, postChat, saveReport } from "@/lib/api";
+import type { ChatMessage, ChatToolCall, CopilotResponse, RouteInfo, SaveReportRequest, WhatIfPresets } from "@/lib/types";
+import { ALL_DESTINATIONS, DEFAULT_MONTH, DEFAULT_YEAR, EXAMPLE_QUESTIONS, MONTH_NAMES } from "@/lib/constants";
 import ChatToolResult from "@/components/ChatToolResult";
 import AvailabilityNotice from "@/components/AvailabilityNotice";
 import ErrorMessage from "@/components/ErrorMessage";
+import CopilotReportView from "@/components/CopilotReportView";
 
 // ─── markdown rendering for AI replies ────────────────────────────────────────
 
@@ -35,21 +37,53 @@ const MARKDOWN_COMPONENTS = {
 // ─── agent definitions ────────────────────────────────────────────────────────
 
 const AGENTS = [
-  { id: "demand",   label: "Demand",   icon: "trending_up",    desc: "Passenger & load factor forecasts",        llm: false },
-  { id: "finance",  label: "Finance",  icon: "monitoring",     desc: "Revenue, cost & profit modelling",         llm: false },
-  { id: "market",   label: "Market",   icon: "travel_explore", desc: "Competitor landscape & tourism trends",    llm: true  },
-  { id: "risk",     label: "Risk",     icon: "shield",         desc: "Fuel, competitive & macro risk flags",     llm: true  },
-  { id: "strategy", label: "Strategy", icon: "psychology",     desc: "Boardroom-ready recommendations",          llm: true  },
+  { id: "demand",   label: "Demand Agent",   icon: "trending_up",    desc: "Passenger & load factor forecasts",     llm: false },
+  { id: "finance",  label: "Finance Agent",  icon: "monitoring",     desc: "Revenue, cost & profit modelling",      llm: false },
+  { id: "market",   label: "Market Agent",   icon: "travel_explore", desc: "Competitor landscape & tourism trends", llm: true  },
+  { id: "risk",     label: "Risk Agent",     icon: "shield",         desc: "Fuel, competitive & macro risk flags",  llm: true  },
+  { id: "strategy", label: "Strategy Agent", icon: "psychology",     desc: "Boardroom-ready recommendations",       llm: true  },
 ];
 
 const QUICK_ACTIONS = [
-  { category: "DEMAND",       label: "Forecast demand 2024–2027",  prompt: "Forecast demand for Da Nang from 2024 to 2027" },
+  { category: "DEMAND",        label: "Forecast demand 2024–2027", prompt: "Forecast demand for Da Nang from 2024 to 2027" },
   { category: "PROFITABILITY", label: "Best routes in 2026",       prompt: "Which routes will be most profitable in 2026?" },
-  { category: "REVENUE",      label: "Singapore outlook 2026",     prompt: "What will our Singapore revenue look like in 2026?" },
-  { category: "GROWTH",       label: "Fastest growing route",      prompt: "Which route has the fastest demand growth trajectory from 2024 to 2027?" },
-  { category: "EXPANSION",    label: "Da Nang launch case",        prompt: "Should we launch Sydney to Da Nang?" },
-  { category: "SCENARIO",     label: "Fuel shock impact",          prompt: "What happens if fuel prices rise 25%?" },
+  { category: "REVENUE",       label: "Singapore outlook 2026",    prompt: "What will our Singapore revenue look like in 2026?" },
+  { category: "GROWTH",        label: "Fastest growing route",     prompt: "Which route has the fastest demand growth trajectory from 2024 to 2027?" },
+  { category: "EXPANSION",     label: "Da Nang launch case",       prompt: "Should we launch Sydney to Da Nang?" },
+  { category: "SCENARIO",      label: "Fuel shock impact",         prompt: "What happens if fuel prices rise 25%?" },
 ];
+
+// ─── report generation (absorbed from the old /reports/new page) ─────────────
+
+function fmtUsd(v: number) {
+  const abs = Math.abs(v);
+  const sign = v < 0 ? "-" : "";
+  if (abs >= 1e6) return `${sign}$${(abs / 1e6).toFixed(1)}M`;
+  if (abs >= 1e3) return `${sign}$${(abs / 1e3).toFixed(0)}K`;
+  return `${sign}$${abs.toFixed(0)}`;
+}
+
+function buildSaveRequest(report: CopilotResponse, destinationCity: string): SaveReportRequest {
+  const agents = ["demand", "finance"];
+  if (report.market_analysis.available) agents.push("market");
+  if (report.risk_analysis.available) agents.push("risk");
+  if (report.strategy.available) agents.push("strategy");
+
+  const summary = report.strategy.available
+    ? report.strategy.executive_summary
+    : `Full 5-agent pipeline run for SYD → ${destinationCity}, ${MONTH_NAMES[report.month - 1]} ${report.year}. Scenario profit ${fmtUsd(report.finance.scenario.profit_usd)} (${report.finance.delta.profit_usd >= 0 ? "+" : ""}${fmtUsd(report.finance.delta.profit_usd)} vs baseline).`;
+  const description = summary.length > 220 ? `${summary.slice(0, 220).trimEnd()}…` : summary;
+
+  return {
+    kind: "route_analysis",
+    destination: report.destination,
+    destination_city: destinationCity,
+    title: `SYD → ${destinationCity} Strategy Analysis`,
+    description,
+    agents,
+    payload: report,
+  };
+}
 
 // ─── types ────────────────────────────────────────────────────────────────────
 
@@ -79,13 +113,28 @@ function CopilotPageInner() {
   const [llmAvailable, setLlmAvailable] = useState<boolean | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
 
+  // Report-generation flow
+  const [routes, setRoutes] = useState<RouteInfo[]>([]);
+  const [presets, setPresets] = useState<WhatIfPresets>({});
+  const [destination, setDestination] = useState<string>(ALL_DESTINATIONS[0]);
+  const [preset, setPreset] = useState<string>("");
+  const [report, setReport] = useState<CopilotResponse | null>(null);
+  const [reportLoading, setReportLoading] = useState(false);
+  const [savedId, setSavedId] = useState<string | null>(null);
+
   useEffect(() => {
     getHealth().then((h) => setLlmAvailable(h.llm_available)).catch(() => setLlmAvailable(false));
+    Promise.all([getRoutes(), getWhatIfPresets()])
+      .then(([routesData, presetsData]) => {
+        setRoutes(routesData.routes);
+        setPresets(presetsData);
+      })
+      .catch(() => {});
   }, []);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, loading]);
+  }, [messages, loading, report, reportLoading]);
 
   useEffect(() => {
     const q = searchParams.get("q");
@@ -116,206 +165,346 @@ function CopilotPageInner() {
     }
   }
 
+  async function generateReport() {
+    if (reportLoading) return;
+    setReportLoading(true);
+    setReport(null);
+    setSavedId(null);
+    setError(null);
+
+    const destinationCity = routes.find((r) => r.destination === destination)?.destination_city ?? destination;
+
+    try {
+      const result = await getCopilot({
+        destination,
+        year: DEFAULT_YEAR,
+        month: DEFAULT_MONTH,
+        ...(preset ? { preset } : {}),
+      });
+      setReport(result);
+
+      try {
+        const saved = await saveReport(buildSaveRequest(result, destinationCity));
+        setSavedId(saved.id);
+      } catch {
+        // Library save failing shouldn't hide the analysis the user just ran.
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setReportLoading(false);
+    }
+  }
+
   const hasMessages = messages.length > 0;
+  const pipelineRunning = reportLoading;
+  const pipelineDone = !reportLoading && report !== null;
 
   return (
-    <div className="flex h-[calc(100vh-9rem)] flex-col gap-4">
-
-      {/* ── agent status bar ── */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <span className="agent-pulse h-2 w-2 rounded-full bg-tertiary" />
-          <h2 className="font-label text-[10px] uppercase tracking-widest text-primary">
-            Multi-Agent Command Center
-          </h2>
-        </div>
-        {llmAvailable !== null && (
-          <span
-            className={`rounded border px-2 py-0.5 font-label text-[10px] ${
-              llmAvailable
-                ? "border-tertiary/20 bg-tertiary/10 text-tertiary"
-                : "border-white/10 bg-white/5 text-on-surface-variant"
-            }`}
-          >
-            {llmAvailable ? "AI ONLINE" : "AI OFFLINE · Set GEMINI_API_KEY"}
-          </span>
-        )}
-      </div>
-      <div className="grid grid-cols-5 gap-2">
-        {AGENTS.map((agent) => {
-          const online = !agent.llm || llmAvailable === true;
-          const status = online ? (agent.llm ? "AI" : "COMPUTE") : "OFFLINE";
-          return (
-            <div
-              key={agent.id}
-              className={`flex items-center justify-between gap-2 rounded p-3 ${
-                online ? "glass-panel-active" : "glass-panel"
+    <div className="flex h-[calc(100vh-9rem)] gap-4">
+      {/* ── left: chat column ── */}
+      <div className="flex min-w-0 flex-1 flex-col gap-4">
+        {/* status bar */}
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <span className="agent-pulse h-2 w-2 rounded-full bg-tertiary" />
+            <h2 className="font-label text-[10px] uppercase tracking-widest text-primary">Strategy Copilot</h2>
+          </div>
+          {llmAvailable !== null && (
+            <span
+              className={`rounded border px-2 py-0.5 font-label text-[10px] ${
+                llmAvailable
+                  ? "border-tertiary/20 bg-tertiary/10 text-tertiary"
+                  : "border-white/10 bg-white/5 text-on-surface-variant"
               }`}
             >
-              <div className="flex items-center gap-3">
-                <span
-                  className={`material-symbols-outlined text-[20px] ${
-                    online ? "text-tertiary" : "text-on-surface-variant/40"
-                  }`}
-                >
-                  {agent.icon}
-                </span>
-                <div>
-                  <p className={`font-label text-[11px] ${online ? "text-on-surface" : "text-on-surface-variant/40"}`}>
-                    {agent.label}
-                  </p>
-                  <p className={`font-label text-[10px] ${online ? "text-tertiary" : "text-on-surface-variant/40"}`}>
-                    {status}
-                  </p>
-                </div>
-              </div>
-              {online && <span className="agent-pulse h-2 w-2 shrink-0 rounded-full bg-tertiary" />}
-            </div>
-          );
-        })}
-      </div>
-
-      {/* ── quick-action predictive cards (hidden once chat starts) ── */}
-      {!hasMessages && (
-        <div className="grid grid-cols-2 gap-2 md:grid-cols-3 lg:grid-cols-6">
-          {QUICK_ACTIONS.map((qa) => (
-            <button
-              key={qa.label}
-              type="button"
-              onClick={() => sendMessage(qa.prompt)}
-              className="glass-panel rounded p-3 text-left transition-all hover:bg-white/5"
-            >
-              <p className="mb-1 font-label text-[10px] text-tertiary">{qa.category}</p>
-              <p className="text-sm leading-tight text-on-surface">{qa.label}</p>
-            </button>
-          ))}
+              {llmAvailable ? "MULTI-AGENT SYNC ACTIVE" : "AI OFFLINE · Set GEMINI_API_KEY"}
+            </span>
+          )}
         </div>
-      )}
 
-      {/* ── chat messages ── */}
-      <div className="glass-panel flex-1 overflow-y-auto rounded-lg p-4 space-y-4">
-        {!hasMessages && (
-          <div className="flex flex-col items-center justify-center h-full gap-3 text-center py-8">
-            <span className="material-symbols-outlined text-[40px] text-tertiary/30">forum</span>
-            <div>
-              <p className="text-sm text-on-surface-variant">
-                Ask about routes, fares, capacity, fuel, competitors, or request a multi-year forecast.
-              </p>
-              <div className="mt-3 flex flex-wrap justify-center gap-2">
-                {EXAMPLE_QUESTIONS.map((q) => (
-                  <button
-                    key={q}
-                    type="button"
-                    onClick={() => sendMessage(q)}
-                    className="rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-sm text-tertiary transition-colors hover:bg-tertiary/10"
-                  >
-                    {q}
-                  </button>
-                ))}
-              </div>
-            </div>
+        {/* quick-action predictive cards (hidden once chat starts) */}
+        {!hasMessages && !report && !reportLoading && (
+          <div className="grid grid-cols-2 gap-2 md:grid-cols-3 lg:grid-cols-6">
+            {QUICK_ACTIONS.map((qa) => (
+              <button
+                key={qa.label}
+                type="button"
+                onClick={() => sendMessage(qa.prompt)}
+                className="glass-panel rounded p-3 text-left transition-all hover:bg-white/5"
+              >
+                <p className="mb-1 font-label text-[10px] text-tertiary">{qa.category}</p>
+                <p className="text-sm leading-tight text-on-surface">{qa.label}</p>
+              </button>
+            ))}
           </div>
         )}
 
-        {messages.map((msg, i) => {
-          const isUser = msg.role === "user";
-          return (
-            <div key={i} className={`flex gap-3 ${isUser ? "justify-end" : "justify-start"}`}>
-              {!isUser && (
-                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-tertiary/30 bg-tertiary/10">
-                  <span className="material-symbols-outlined text-[18px] text-tertiary">smart_toy</span>
-                </div>
-              )}
-              <div className={`space-y-2 ${isUser ? "max-w-[75%]" : "w-full"}`}>
-                {msg.available === false ? (
-                  <AvailabilityNotice text={msg.content} />
-                ) : isUser ? (
-                  <div className="rounded-xl rounded-tr-none bg-secondary-container px-4 py-2 text-sm text-white whitespace-pre-wrap shadow-lg">
-                    {msg.content}
-                  </div>
-                ) : (
-                  <div className="rounded-xl rounded-tl-none border border-white/5 bg-white/5 px-4 py-3 text-sm text-on-surface leading-relaxed">
-                    <ReactMarkdown remarkPlugins={[remarkGfm]} components={MARKDOWN_COMPONENTS}>
-                      {msg.content}
-                    </ReactMarkdown>
-                  </div>
-                )}
-
-                {msg.toolCalls && msg.toolCalls.length > 0 && (
-                  <div className="space-y-2">
-                    {msg.toolCalls.map((tc, j) => (
-                      <ChatToolResult key={j} toolCall={tc} />
-                    ))}
-                  </div>
-                )}
-              </div>
-              {isUser && (
-                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-secondary-container">
-                  <span className="material-symbols-outlined text-[18px] text-white">person</span>
-                </div>
-              )}
-            </div>
-          );
-        })}
-
-        {loading && (
-          <div className="flex justify-start gap-3">
-            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-tertiary/30 bg-tertiary/10">
-              <span className="material-symbols-outlined text-[18px] text-tertiary">smart_toy</span>
-            </div>
-            <div className="flex items-center gap-3 rounded-xl rounded-tl-none border border-white/5 bg-white/5 px-4 py-3">
-              <span className="agent-pulse h-2 w-2 rounded-full bg-tertiary" />
-              <div className="space-y-0.5">
-                <p className="text-sm text-on-surface-variant">Agents researching…</p>
-                <p className="font-label text-[10px] text-on-surface-variant/50">
-                  Running simulations and building forecast
+        {/* chat messages */}
+        <div className="glass-panel flex-1 space-y-4 overflow-y-auto rounded-lg p-4">
+          {!hasMessages && !report && !reportLoading && (
+            <div className="flex h-full flex-col items-center justify-center gap-3 py-8 text-center">
+              <span className="material-symbols-outlined text-[40px] text-tertiary/30">forum</span>
+              <div>
+                <p className="text-sm text-on-surface-variant">
+                  Ask about routes, fares, capacity, fuel, competitors — or generate a full 5-agent report below.
                 </p>
+                <div className="mt-3 flex flex-wrap justify-center gap-2">
+                  {EXAMPLE_QUESTIONS.map((q) => (
+                    <button
+                      key={q}
+                      type="button"
+                      onClick={() => sendMessage(q)}
+                      className="rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-sm text-tertiary transition-colors hover:bg-tertiary/10"
+                    >
+                      {q}
+                    </button>
+                  ))}
+                </div>
               </div>
             </div>
-          </div>
-        )}
+          )}
 
-        <div ref={bottomRef} />
+          {messages.map((msg, i) => {
+            const isUser = msg.role === "user";
+            return (
+              <div key={i} className={`flex gap-3 ${isUser ? "justify-end" : "justify-start"}`}>
+                {!isUser && (
+                  <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-tertiary/30 bg-tertiary/10">
+                    <span className="material-symbols-outlined text-[18px] text-tertiary">smart_toy</span>
+                  </div>
+                )}
+                <div className={`space-y-2 ${isUser ? "max-w-[75%]" : "w-full"}`}>
+                  {msg.available === false ? (
+                    <AvailabilityNotice text={msg.content} />
+                  ) : isUser ? (
+                    <div className="whitespace-pre-wrap rounded-xl rounded-tr-none bg-secondary-container px-4 py-2 text-sm text-white shadow-lg">
+                      {msg.content}
+                    </div>
+                  ) : (
+                    <div className="rounded-xl rounded-tl-none border border-white/5 bg-white/5 px-4 py-3 text-sm leading-relaxed text-on-surface">
+                      <ReactMarkdown remarkPlugins={[remarkGfm]} components={MARKDOWN_COMPONENTS}>
+                        {msg.content}
+                      </ReactMarkdown>
+                    </div>
+                  )}
+
+                  {msg.toolCalls && msg.toolCalls.length > 0 && (
+                    <div className="space-y-2">
+                      {msg.toolCalls.map((tc, j) => (
+                        <ChatToolResult key={j} toolCall={tc} />
+                      ))}
+                    </div>
+                  )}
+                </div>
+                {isUser && (
+                  <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-secondary-container">
+                    <span className="material-symbols-outlined text-[18px] text-white">person</span>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+
+          {loading && (
+            <div className="flex justify-start gap-3">
+              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-tertiary/30 bg-tertiary/10">
+                <span className="material-symbols-outlined text-[18px] text-tertiary">smart_toy</span>
+              </div>
+              <div className="flex items-center gap-3 rounded-xl rounded-tl-none border border-white/5 bg-white/5 px-4 py-3">
+                <span className="agent-pulse h-2 w-2 rounded-full bg-tertiary" />
+                <div className="space-y-0.5">
+                  <p className="text-sm text-on-surface-variant">Agents researching…</p>
+                  <p className="font-label text-[10px] text-on-surface-variant/50">
+                    Running simulations and building forecast
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {reportLoading && (
+            <div className="flex flex-col items-center gap-3 py-12 text-on-surface-variant">
+              <span className="agent-pulse h-3 w-3 rounded-full bg-tertiary" />
+              <p className="text-sm">Running 5-agent pipeline — LLM agents may take up to 30s…</p>
+            </div>
+          )}
+
+          {report && (
+            <div className="space-y-3">
+              {savedId && (
+                <div className="flex items-center gap-2 rounded border border-tertiary/20 bg-tertiary/10 px-4 py-2.5">
+                  <span className="material-symbols-outlined text-[16px] text-tertiary">check_circle</span>
+                  <span className="font-label text-[11px] text-tertiary">Saved to Report Library</span>
+                  <Link
+                    href={`/reports/${savedId}`}
+                    className="ml-auto font-label text-[11px] text-tertiary underline hover:no-underline"
+                  >
+                    View saved report →
+                  </Link>
+                </div>
+              )}
+              <CopilotReportView report={report} />
+            </div>
+          )}
+
+          <div ref={bottomRef} />
+        </div>
+
+        {error && <ErrorMessage message={error} />}
+
+        {/* report preset chips + input */}
+        <div className="space-y-3">
+          <div className="flex items-center gap-2 overflow-x-auto pb-1">
+            <div className="glass-panel flex shrink-0 items-center gap-2 rounded-lg border-tertiary/20 px-3 py-1.5">
+              <span className="material-symbols-outlined text-[16px] text-tertiary">map</span>
+              <select
+                value={destination}
+                onChange={(e) => setDestination(e.target.value)}
+                className="cursor-pointer border-none bg-transparent font-label text-[11px] text-on-surface focus:outline-none"
+              >
+                {(routes.length ? routes.map((r) => r.destination) : Array.from(ALL_DESTINATIONS)).map((d) => (
+                  <option key={d} value={d} className="bg-surface-container">
+                    Route: SYD → {d}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="glass-panel flex shrink-0 items-center gap-2 rounded-lg px-3 py-1.5">
+              <span className="material-symbols-outlined text-[16px] text-on-surface-variant">
+                settings_input_component
+              </span>
+              <select
+                value={preset}
+                onChange={(e) => setPreset(e.target.value)}
+                className="cursor-pointer border-none bg-transparent font-label text-[11px] text-on-surface-variant focus:outline-none"
+              >
+                <option value="" className="bg-surface-container">
+                  Preset: Baseline
+                </option>
+                {Object.entries(presets).map(([key, val]) => (
+                  <option key={key} value={key} className="bg-surface-container">
+                    Preset: {val.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <button
+              type="button"
+              onClick={generateReport}
+              disabled={reportLoading}
+              className="ml-auto flex shrink-0 items-center gap-1.5 rounded-full bg-tertiary/10 px-3 py-1.5 font-label text-[11px] text-tertiary transition-all hover:bg-tertiary/20 disabled:opacity-50"
+            >
+              <span className="material-symbols-outlined text-[16px]">description</span>
+              {reportLoading ? "GENERATING…" : "GENERATE FULL REPORT"}
+            </button>
+          </div>
+
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              sendMessage(input);
+            }}
+            className="flex gap-2"
+          >
+            <input
+              type="text"
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              placeholder="Ask Strategy Copilot about demand, revenue, forecasts, or a strategy decision…"
+              className="flex-1 rounded border border-white/10 bg-black/20 px-4 py-2.5 text-sm text-on-surface transition-colors placeholder:text-on-surface-variant/40 focus:border-tertiary focus:outline-none"
+              disabled={loading}
+            />
+            <button
+              type="submit"
+              disabled={loading || !input.trim()}
+              className="flex items-center gap-2 rounded bg-secondary-container px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-secondary-container/80 disabled:opacity-50"
+            >
+              <span className="material-symbols-outlined text-[18px]">send</span>
+              Send
+            </button>
+          </form>
+        </div>
       </div>
 
-      {error && <ErrorMessage message={error} />}
-
-      {/* ── input ── */}
-      <form
-        onSubmit={(e) => { e.preventDefault(); sendMessage(input); }}
-        className="flex gap-2"
-      >
-        <button
-          type="button"
-          title="Voice input (coming soon)"
-          className="flex shrink-0 items-center justify-center rounded border border-white/10 bg-white/5 px-3 py-2.5 transition-colors hover:bg-white/10"
-        >
-          <span className="material-symbols-outlined text-[18px] text-on-surface-variant">mic</span>
-        </button>
-        <label
-          title="Attach file"
-          className="flex shrink-0 cursor-pointer items-center justify-center rounded border border-white/10 bg-white/5 px-3 py-2.5 transition-colors hover:bg-white/10"
-        >
-          <input type="file" className="sr-only" />
-          <span className="material-symbols-outlined text-[18px] text-on-surface-variant">attach_file</span>
-        </label>
-        <input
-          type="text"
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          placeholder="Ask about demand, revenue, future forecasts, or a strategy decision…"
-          className="flex-1 rounded border border-white/10 bg-black/20 px-4 py-2.5 text-sm text-on-surface placeholder:text-on-surface-variant/40 focus:border-tertiary focus:outline-none transition-colors"
-          disabled={loading}
-        />
-        <button
-          type="submit"
-          disabled={loading || !input.trim()}
-          className="flex items-center gap-2 rounded bg-secondary-container px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-secondary-container/80 disabled:opacity-50"
-        >
-          <span className="material-symbols-outlined text-[18px]">send</span>
-          Send
-        </button>
-      </form>
+      {/* ── right: agent pipeline panel ── */}
+      <aside className="glass-panel hidden w-80 shrink-0 flex-col rounded-lg xl:flex">
+        <div className="border-b border-white/10 p-4">
+          <h2 className="font-label text-[11px] font-bold uppercase tracking-wider text-on-surface">
+            Agent Pipeline
+          </h2>
+          <p className="font-label text-[10px] text-on-surface-variant/60">Parallel strategic processing</p>
+        </div>
+        <div className="relative flex-1 overflow-y-auto p-4">
+          <div className="absolute bottom-8 left-[31px] top-8 w-[2px] bg-white/5" />
+          <div className="relative space-y-8">
+            {AGENTS.map((agent) => {
+              const online = !agent.llm || llmAvailable === true;
+              const status = pipelineRunning
+                ? "PROCESSING"
+                : pipelineDone
+                ? online
+                  ? "COMPLETE"
+                  : "SKIPPED"
+                : online
+                ? agent.llm
+                  ? "AI READY"
+                  : "COMPUTE"
+                : "OFFLINE";
+              const active = pipelineRunning || (pipelineDone && online);
+              return (
+                <div key={agent.id} className={`flex gap-4 ${online ? "" : "opacity-50"}`}>
+                  <div className="relative z-10">
+                    <div
+                      className={`flex h-8 w-8 items-center justify-center rounded-full border ${
+                        pipelineDone && online
+                          ? "border-tertiary bg-tertiary text-on-tertiary"
+                          : pipelineRunning
+                          ? "agent-pulse border-tertiary bg-surface-container-highest text-tertiary"
+                          : online
+                          ? "border-tertiary/40 bg-surface-container-highest text-tertiary"
+                          : "border-white/10 bg-surface-container-highest text-on-surface-variant"
+                      }`}
+                    >
+                      <span className="material-symbols-outlined text-[16px]">
+                        {pipelineDone && online ? "check" : pipelineRunning ? "sync" : agent.icon}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="mb-1 flex items-start justify-between gap-2">
+                      <h4 className="text-sm font-bold text-on-surface">{agent.label}</h4>
+                      <span
+                        className={`shrink-0 rounded px-1.5 py-0.5 font-label text-[9px] ${
+                          active
+                            ? "bg-tertiary/10 text-tertiary"
+                            : online
+                            ? "bg-white/5 text-on-surface-variant"
+                            : "bg-white/5 text-on-surface-variant/40"
+                        }`}
+                      >
+                        {status}
+                      </span>
+                    </div>
+                    <p className="font-label text-[10px] leading-relaxed text-on-surface-variant/70">
+                      {online ? agent.desc : "Set GEMINI_API_KEY to activate"}
+                    </p>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+        <div className="border-t border-white/10 p-4">
+          <div className="flex items-center justify-between">
+            <span className="font-label text-[10px] uppercase text-on-surface-variant">Pipeline Status</span>
+            <span className="flex items-center gap-2 font-label text-[11px] font-bold text-tertiary">
+              <span className={`h-2 w-2 rounded-full bg-tertiary ${pipelineRunning ? "agent-pulse" : ""}`} />
+              {pipelineRunning ? "RUNNING…" : pipelineDone ? "COMPLETE" : "IDLE"}
+            </span>
+          </div>
+        </div>
+      </aside>
     </div>
   );
 }

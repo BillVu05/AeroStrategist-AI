@@ -9,79 +9,56 @@ interface AgentStatusPanelProps {
 
 export default function AgentStatusPanel({ llmAvailable }: AgentStatusPanelProps) {
   const onlineCount = AGENT_DEFINITIONS.filter((a) => !a.llmBacked || llmAvailable).length;
+  const total = AGENT_DEFINITIONS.length;
+  const circumference = 2 * Math.PI * 58;
+  const offset = circumference * (1 - onlineCount / total);
 
   return (
-    <div className="glass-panel flex h-full flex-col rounded-lg p-4">
-      <h5 className="mb-4 flex items-center gap-2 border-b border-white/5 pb-4 font-label text-[11px] font-bold uppercase tracking-[0.2em] text-primary">
-        <span className="material-symbols-outlined text-sm text-tertiary">hub</span>
-        AI Agent Status
-      </h5>
-
-      <div className="flex-1 space-y-6">
-        {AGENT_DEFINITIONS.map((agent) => {
-          const online = !agent.llmBacked || llmAvailable;
-          const badge = online ? (agent.llmBacked ? "AI" : "COMPUTE") : "OFFLINE";
-          return (
-            <div key={agent.id} className="group flex items-center gap-4">
-              <div
-                className={`flex h-9 w-9 shrink-0 items-center justify-center rounded border transition-colors ${
-                  online ? "border-tertiary/20 bg-tertiary/10" : "border-white/10 bg-white/5"
-                }`}
-              >
-                <span
-                  className={`material-symbols-outlined text-[18px] ${
-                    online ? "text-tertiary" : "text-on-surface-variant/40"
-                  }`}
-                >
-                  {agent.icon}
-                </span>
-              </div>
-              <div className="flex-1">
-                <div className="flex items-center justify-between">
-                  <span className="font-label text-[11px] text-primary">{agent.name}</span>
-                  <span
-                    className={`rounded px-1 font-label text-[8px] font-bold tracking-tighter ${
-                      online ? "bg-tertiary/10 text-tertiary" : "bg-white/5 text-on-surface-variant/40"
-                    }`}
-                  >
-                    {badge}
-                  </span>
-                </div>
-                <p className="mt-1 font-label text-[9px] leading-none text-on-surface-variant/60">
-                  {online ? agent.blurb : "Set GEMINI_API_KEY to activate"}
-                </p>
-              </div>
-            </div>
-          );
-        })}
+    <div className="glass-panel rim-light relative flex h-full flex-col overflow-hidden rounded-2xl p-6">
+      <div className="mb-6 flex items-center gap-3">
+        <span className="material-symbols-outlined text-tertiary">smart_toy</span>
+        <h4 className="font-label text-[11px] font-bold uppercase tracking-[0.1em] text-on-surface">
+          AI Agent Status
+        </h4>
       </div>
 
-      <div className="mt-auto space-y-4">
-        <div className="rounded border border-white/5 bg-tertiary/5 p-4">
-          <p className="mb-2 font-label text-[10px] font-bold uppercase tracking-widest text-tertiary">
-            Network Health
-          </p>
-          <div className="flex gap-1.5">
-            {AGENT_DEFINITIONS.map((agent, i) => (
-              <div
-                key={agent.id}
-                className={`h-1 flex-1 rounded-full ${i < onlineCount ? "bg-tertiary" : "bg-white/10"}`}
-              />
-            ))}
+      <div className="flex flex-1 flex-col items-center justify-center py-4">
+        <div className="relative flex h-32 w-32 items-center justify-center">
+          <svg className="h-full w-full -rotate-90">
+            <circle cx="64" cy="64" r="58" fill="none" stroke="rgba(255,255,255,0.05)" strokeWidth="4" />
+            <circle
+              className="transition-all duration-1000"
+              cx="64"
+              cy="64"
+              r="58"
+              fill="none"
+              stroke="#4cd7f6"
+              strokeDasharray={circumference}
+              strokeDashoffset={offset}
+              strokeWidth="4"
+            />
+          </svg>
+          <div className="absolute inset-0 flex flex-col items-center justify-center">
+            <span className="cyan-glow-text text-3xl font-bold">{onlineCount}</span>
+            <span className="font-label text-[10px] font-bold text-on-surface-variant">ONLINE</span>
           </div>
-          <p className="mt-2 font-label text-[9px] text-on-surface-variant/50">
-            {onlineCount}/{AGENT_DEFINITIONS.length} agents online
-          </p>
         </div>
+        <p className="mt-4 text-center font-label text-[11px] leading-relaxed text-on-surface-variant">
+          {onlineCount}/{total} strategy agents ready
+          <br />
+          {llmAvailable ? "Multi-agent sync active" : "Set GEMINI_API_KEY for AI agents"}
+        </p>
+      </div>
 
+      <div className="mt-4 border-t border-white/10 pt-4">
         <Link
-          href="/copilot?q=Optimize+fleet+allocation+across+the+Pacific+Wings+network"
-          className="group flex w-full items-center justify-center gap-2 rounded border border-white/10 bg-white/5 py-3 font-label text-xs font-bold uppercase tracking-widest text-primary transition-all hover:bg-tertiary hover:text-on-tertiary"
+          href="/copilot"
+          className="group flex items-center justify-center gap-2 text-tertiary transition-colors hover:text-tertiary/70"
         >
-          <span className="material-symbols-outlined text-[18px] transition-transform group-hover:rotate-180">
-            auto_awesome
+          <span className="font-label text-[11px] font-bold uppercase tracking-wider">Launch Copilot</span>
+          <span className="material-symbols-outlined text-[16px] transition-transform group-hover:translate-x-1">
+            arrow_forward
           </span>
-          Optimize Fleet
         </Link>
       </div>
     </div>

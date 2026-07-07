@@ -19,8 +19,6 @@ sys.path.insert(0, str(ROOT / "ml"))
 from features import COUNTRY_ALPHA2_TO_ALPHA3, ReferenceData  # noqa: E402
 from engine import SimulationEngine  # noqa: E402
 from macro_projections import (  # noqa: E402
-    project_gdp,
-    project_population,
     project_tourism,
     project_fuel_price,
     project_market_size,
@@ -87,11 +85,14 @@ def multi_year_route_projection(
 ) -> dict:
     """
     Project annual demand, revenue, cost, and profit for a route across
-    [from_year, to_year] using projected macro indicators as simulation inputs.
+    [from_year, to_year].
 
-    Unlike the existing forecast_demand_trend tool (which uses a static macro
-    snapshot for all years), this feeds projected GDP-adjusted tourism and
-    projected fuel prices into each year's 12 monthly simulations.
+    Demand growth beyond the model's training window is applied inside
+    SimulationEngine.run_scenario via its market_growth_multiplier (the
+    XGBoost model is tree-based and cannot extrapolate, so feeding grown
+    macro features into it produced flat forecasts). This module feeds
+    projected fuel prices into each year's costs and reports the macro
+    projections alongside the results.
 
     Args:
         destination: IATA destination code.
@@ -113,18 +114,12 @@ def multi_year_route_projection(
     tourism_proj = project_tourism(alpha3, snapshot_tourism, snapshot_year, from_year, to_year)
     fuel_proj = project_fuel_price(from_year, to_year)
     market_proj = project_market_size(alpha3, snapshot_tourism, snapshot_year, from_year, to_year)
-    gdp_proj = project_gdp(alpha3, from_year, to_year)
-    pop_proj = project_population(alpha3, from_year, to_year)
 
     yearly: dict[str, dict] = {}
     prev_pax: float | None = None
 
     for year in range(from_year, to_year + 1):
-        tourism_multiplier = tourism_proj[year] / snapshot_tourism if snapshot_tourism > 0 else 1.0
         fuel_price = fuel_proj[year]
-        gdp_val = gdp_proj[year]["gdp_usd"]
-        gdp_growth_val = gdp_proj[year]["gdp_growth_pct"]
-        pop_val = float(pop_proj[year])
 
         annual_pax = 0.0
         annual_revenue = 0.0
@@ -138,11 +133,7 @@ def multi_year_route_projection(
                     destination,
                     year,
                     month,
-                    tourism_arrivals_multiplier=tourism_multiplier,
                     fuel_price_usd_per_gallon=fuel_price,
-                    gdp_usd_override=gdp_val,
-                    gdp_growth_pct_override=gdp_growth_val,
-                    population_override=pop_val,
                     **scenario_kwargs,
                 )
                 pax = float(r["demand"]["passengers_carried"])
@@ -182,7 +173,7 @@ def multi_year_route_projection(
             "peak_month": peak["month"],
             "yoy_growth_pct": yoy,
             "projected_fuel_price_usd_per_gallon": fuel_price,
-            "tourism_arrivals_multiplier": round(tourism_multiplier, 4),
+            "market_growth_multiplier": _engine.market_growth_multiplier(destination, year),
             "tourism_arrivals": tourism_proj[year],
             "gdp_usd": market_proj[year]["gdp_usd"],
             "gdp_growth_pct": market_proj[year]["gdp_growth_pct"],

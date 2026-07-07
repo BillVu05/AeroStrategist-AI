@@ -4,18 +4,12 @@ import { useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 
 const PAGE_TITLES: Record<string, string> = {
-  "/":            "Executive Intelligence",
-  "/routes":      "Route Intelligence",
-  "/open-route":  "Open Route Analysis",
-  "/market":      "Market Analysis",
-  "/demand":      "Demand Forecasting",
-  "/revenue":     "Revenue Intelligence",
-  "/copilot":     "AI Strategy Copilot",
-  "/future":      "Future Analysis",
-  "/risk":        "Risk Intelligence",
-  "/reports":     "Reports Library",
-  "/reports/new": "New Strategic Analysis",
-  "/simulator":   "Scenario Simulator",
+  "/":             "Executive Intelligence",
+  "/routes":       "Route Explorer",
+  "/market":       "Market & Demand",
+  "/scenario-lab": "Scenario Lab",
+  "/copilot":      "AI Strategy Copilot",
+  "/reports":      "Report Library",
 };
 
 export default function HeaderStatusBar() {

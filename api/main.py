@@ -118,15 +118,23 @@ def _forecast_demand(destination: str, year: int, month: int, avg_fare_usd: floa
     X = pd.DataFrame([features])[_feature_columns]
     predicted_passengers = float(_model.predict(X)[0])
     confidence = _engine.confidence_model.score(destination, year, features, X, predicted_passengers)
+    # Tree models saturate outside the training window, so market growth for
+    # future years is applied as a multiplier (IMF WEO GDP x IATA income
+    # elasticity + tourism CAGR — see simulation/macro_projections.py), same
+    # as engine.run_scenario. Applied AFTER confidence scoring, which
+    # describes the model's own prediction. 1.0 inside the training window.
+    growth = _engine.market_growth_multiplier(destination, year)
+    predicted_passengers *= growth
 
     capacity_monthly = _ref.capacity_monthly(destination)
     predicted_load_factor = predicted_passengers / capacity_monthly
 
     # 80% empirical prediction interval - point forecast +/- the real
-    # holdout's residual quantiles, clamped to [0, capacity] since
-    # passengers can't be negative or exceed the route's own seats.
-    passengers_low = max(0.0, min(predicted_passengers + _residual_p10, capacity_monthly))
-    passengers_high = max(0.0, min(predicted_passengers + _residual_p90, capacity_monthly))
+    # holdout's residual quantiles (scaled with the market), clamped to
+    # [0, capacity] since passengers can't be negative or exceed the
+    # route's own seats.
+    passengers_low = max(0.0, min(predicted_passengers + _residual_p10 * growth, capacity_monthly))
+    passengers_high = max(0.0, min(predicted_passengers + _residual_p90 * growth, capacity_monthly))
 
     return {
         "route": route,

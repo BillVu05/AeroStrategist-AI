@@ -3,83 +3,57 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { getDemandForecast, getMarketContext, getRoutes, getWhatIf } from "@/lib/api";
-import type { DemandForecastResponse, MarketContext, RouteInfo, WhatIfResponse } from "@/lib/types";
+import type { DemandForecastResponse, MarketContext, RouteInfo } from "@/lib/types";
 import { DEFAULT_MONTH, DEFAULT_YEAR } from "@/lib/constants";
 import LoadingSpinner from "@/components/LoadingSpinner";
 import ErrorMessage from "@/components/ErrorMessage";
-import KpiCard from "@/components/KpiCard";
 import MarketShareLeaderboard, { type MarketRow } from "@/components/MarketShareLeaderboard";
-import MiniBarPanel from "@/components/MiniBarPanel";
+import DemandDriversPanel from "@/components/DemandDriversPanel";
+import TrendLinePanel from "@/components/TrendLinePanel";
 
-type CompetitionLevel = "LOW" | "MED" | "HIGH";
-type SortKey = "opportunity" | "revenue" | "demand";
+const MONTH_LABELS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
-interface RouteOpportunityRow {
+// Rolling forecast horizon: current month + the 11 that follow.
+const HORIZON = Array.from({ length: 12 }, (_, i) => {
+  const m0 = DEFAULT_MONTH - 1 + i;
+  const year = DEFAULT_YEAR + Math.floor(m0 / 12);
+  const month = (m0 % 12) + 1;
+  return { year, month, label: `${MONTH_LABELS[m0 % 12]} '${String(year).slice(2)}` };
+});
+
+interface Signal {
   route: RouteInfo;
-  demand: DemandForecastResponse;
-  whatIf: WhatIfResponse;
-  market: MarketContext;
-  opportunityScore: number;
-  competition: CompetitionLevel;
+  competitor: string;
+  frequency: number;
+  fare: number;
+  rating: number;
+  pressure: boolean;
 }
 
-interface MarketData {
-  rows: RouteOpportunityRow[];
+interface MarketDemandData {
   marketRows: MarketRow[];
-  gdpSeries: { label: string; value: number }[];
-  maxPassengers: number;
+  signals: Signal[];
+  driversMarket: MarketContext;
+  avgConfidencePct: number;
 }
 
-function calcOpportunityScore(
-  demand: DemandForecastResponse,
-  whatIf: WhatIfResponse,
-  market: MarketContext,
-  maxPassengers: number,
-  maxRevenue: number,
-): number {
-  const demandScore = maxPassengers > 0 ? (demand.predicted_passengers / maxPassengers) * 40 : 0;
-  const revenueScore = maxRevenue > 0 ? (whatIf.baseline.revenue.total_revenue_usd / maxRevenue) * 30 : 0;
-  const compScore = market.competitors.length === 0 ? 20 : Math.max(0, 20 - market.competitors.length * 5);
-  const gdpScore = Math.min(10, Math.max(0, market.gdp_growth_pct * 2));
-  return Math.round(demandScore + revenueScore + compScore + gdpScore);
+interface ForecastData {
+  paxSeries: { label: string; value: number }[];
+  annualPax: number;
+  peakMonth: { label: string; value: number };
+  avgLoadFactor: number;
 }
 
-function calcCompetition(market: MarketContext): CompetitionLevel {
-  const n = market.competitors.length;
-  if (n === 0) return "LOW";
-  if (n <= 2) return "MED";
-  return "HIGH";
+function fmtPax(value: number) {
+  if (value >= 1e6) return `${(value / 1e6).toFixed(2)}M`;
+  if (value >= 1e3) return `${(value / 1e3).toFixed(0)}K`;
+  return value.toFixed(0);
 }
 
-function fmtUsd(v: number) {
-  const abs = Math.abs(v);
-  const sign = v < 0 ? "-" : "";
-  if (abs >= 1e6) return `${sign}$${(abs / 1e6).toFixed(1)}M`;
-  if (abs >= 1e3) return `${sign}$${(abs / 1e3).toFixed(0)}K`;
-  return `${sign}$${abs.toFixed(0)}`;
-}
-
-function fmtPax(v: number) {
-  if (v >= 1e3) return `${(v / 1e3).toFixed(0)}K`;
-  return v.toFixed(0);
-}
-
-const COMP_COLOR: Record<CompetitionLevel, string> = {
-  LOW: "text-tertiary",
-  MED: "text-secondary",
-  HIGH: "text-error",
-};
-
-const COMP_BG: Record<CompetitionLevel, string> = {
-  LOW: "border-tertiary/20 bg-tertiary/10",
-  MED: "border-secondary/20 bg-secondary/10",
-  HIGH: "border-error/20 bg-error/10",
-};
-
-export default function MarketAnalysisPage() {
-  const [data, setData] = useState<MarketData | null>(null);
+export default function MarketDemandPage() {
+  const [data, setData] = useState<MarketDemandData | null>(null);
+  const [forecast, setForecast] = useState<ForecastData | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [sort, setSort] = useState<SortKey>("opportunity");
 
   useEffect(() => {
     let cancelled = false;
@@ -87,310 +61,226 @@ export default function MarketAnalysisPage() {
     async function load() {
       try {
         const routesData = await getRoutes();
+        const activeRoutes = routesData.routes.filter((r) => r.status === "active");
 
-        const results = await Promise.all(
+        const perRoute = await Promise.all(
           routesData.routes.map(async (route) => {
-            const [demand, whatIf, market] = await Promise.all([
-              getDemandForecast({ destination: route.destination, year: DEFAULT_YEAR, month: DEFAULT_MONTH }),
+            const [whatIf, market, demand] = await Promise.all([
               getWhatIf({ destination: route.destination, year: DEFAULT_YEAR, month: DEFAULT_MONTH }),
               getMarketContext(route.destination, DEFAULT_YEAR),
+              getDemandForecast({ destination: route.destination, year: DEFAULT_YEAR, month: DEFAULT_MONTH }),
             ]);
-            return { route, demand, whatIf, market };
+            return { route, whatIf, market, demand };
           })
         );
 
-        const maxPassengers = Math.max(...results.map((r) => r.demand.predicted_passengers));
-        const maxRevenue = Math.max(...results.map((r) => r.whatIf.baseline.revenue.total_revenue_usd));
+        const marketRows: MarketRow[] = perRoute.map(({ route, whatIf, market }) => ({ route, whatIf, market }));
 
-        const rows: RouteOpportunityRow[] = results.map(({ route, demand, whatIf, market }) => ({
-          route,
-          demand,
-          whatIf,
-          market,
-          opportunityScore: calcOpportunityScore(demand, whatIf, market, maxPassengers, maxRevenue),
-          competition: calcCompetition(market),
+        const signals: Signal[] = perRoute
+          .flatMap(({ route, market }) =>
+            market.competitors.map((c) => ({
+              route,
+              competitor: c.name,
+              frequency: c.weekly_frequency,
+              fare: c.avg_fare_usd,
+              rating: c.rating,
+              pressure: market.competitors.length > 2,
+            }))
+          )
+          .sort((a, b) => b.frequency - a.frequency)
+          .slice(0, 6);
+
+        // Demand drivers for the busiest market by predicted passengers.
+        const busiest = perRoute.reduce((best, r) =>
+          r.demand.predicted_passengers > best.demand.predicted_passengers ? r : best
+        );
+
+        const avgConfidencePct =
+          perRoute.reduce((sum, r) => sum + r.demand.confidence_pct, 0) / perRoute.length;
+
+        if (!cancelled) {
+          setData({ marketRows, signals, driversMarket: busiest.market, avgConfidencePct });
+        }
+
+        // 12-month network forecast (active routes x 12 slow model calls) -
+        // loaded after the fast sections so it doesn't block the whole page.
+        const yearlyForecasts: DemandForecastResponse[][] = await Promise.all(
+          activeRoutes.map((route) =>
+            Promise.all(
+              HORIZON.map((h) =>
+                getDemandForecast({ destination: route.destination, year: h.year, month: h.month })
+              )
+            )
+          )
+        );
+
+        const paxSeries = HORIZON.map((h, i) => ({
+          label: h.label,
+          value: yearlyForecasts.reduce((sum, months) => sum + months[i].predicted_passengers, 0),
         }));
+        const avgLoadFactor =
+          yearlyForecasts.reduce(
+            (sum, months) => sum + months.reduce((s, m) => s + m.predicted_load_factor, 0) / months.length,
+            0
+          ) / yearlyForecasts.length;
 
-        const marketRows: MarketRow[] = results.map(({ route, whatIf, market }) => ({
-          route,
-          whatIf,
-          market,
-        }));
+        const annualPax = paxSeries.reduce((sum, m) => sum + m.value, 0);
+        const peakMonth = paxSeries.reduce((best, m) => (m.value > best.value ? m : best));
 
-        const gdpSeries = results.map(({ route, market }) => ({
-          label: route.destination,
-          value: market.gdp_growth_pct,
-        }));
-
-        if (!cancelled) setData({ rows, marketRows, gdpSeries, maxPassengers });
+        if (!cancelled) {
+          setForecast({ paxSeries, annualPax, peakMonth, avgLoadFactor });
+        }
       } catch (err) {
         if (!cancelled) setError(err instanceof Error ? err.message : String(err));
       }
     }
 
     load();
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   if (error) return <ErrorMessage message={error} />;
   if (!data) return <LoadingSpinner />;
 
-  const { rows, marketRows, gdpSeries, maxPassengers } = data;
-
-  const sorted = [...rows].sort((a, b) => {
-    if (sort === "revenue") return b.whatIf.baseline.revenue.total_revenue_usd - a.whatIf.baseline.revenue.total_revenue_usd;
-    if (sort === "demand") return b.demand.predicted_passengers - a.demand.predicted_passengers;
-    return b.opportunityScore - a.opportunityScore;
-  });
-
-  const topOpp = rows.reduce((best, r) => (r.opportunityScore > best.opportunityScore ? r : best));
-  const topRev = rows.reduce((best, r) =>
-    r.whatIf.baseline.revenue.total_revenue_usd > best.whatIf.baseline.revenue.total_revenue_usd ? r : best
-  );
-  const topTourism = rows.reduce((best, r) =>
-    r.market.tourism_arrivals_baseline > best.market.tourism_arrivals_baseline ? r : best
-  );
-  const lowCompCount = rows.filter((r) => r.competition === "LOW").length;
-  const avgComp = rows.reduce((sum, r) => sum + r.market.competitors.length, 0) / rows.length;
-
-  const growthSignals = rows
-    .flatMap((r) =>
-      r.market.competitors.slice(0, 2).map((c) => ({
-        route: r.route.destination,
-        city: r.route.destination_city,
-        competitor: c.name,
-        frequency: c.weekly_frequency,
-        fare: c.avg_fare_usd,
-      }))
-    )
-    .slice(0, 5);
+  const { marketRows, signals, driversMarket, avgConfidencePct } = data;
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-col items-start justify-between gap-3 md:flex-row md:items-center">
-        <div>
-          <h1 className="text-2xl font-semibold text-on-surface">
-            Market Analysis <span className="text-tertiary">&amp; Intelligence</span>
-          </h1>
-          <p className="text-sm text-on-surface-variant">
-            Pacific Wings network — {DEFAULT_YEAR}/{DEFAULT_MONTH.toString().padStart(2, "0")}
-          </p>
-        </div>
-        <div className="flex items-center gap-3">
-          <Link
-            href="/copilot?q=Execute+optimal+market+strategy+for+Pacific+Wings+network"
-            className="flex items-center gap-2 rounded bg-accent-blue px-4 py-2 font-label text-xs font-medium text-white transition-colors hover:bg-blue-700"
-          >
-            <span className="material-symbols-outlined text-[16px]">play_circle</span>
-            EXECUTE STRATEGY
-          </Link>
-        </div>
+      <div>
+        <h1 className="text-2xl font-semibold text-on-surface">
+          Market <span className="text-tertiary">&amp; Demand Intelligence</span>
+        </h1>
+        <p className="text-sm text-on-surface-variant">
+          Competitive landscape and demand outlook — {DEFAULT_YEAR}/{DEFAULT_MONTH.toString().padStart(2, "0")}
+        </p>
       </div>
 
-      <section className="grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-5">
-        <KpiCard
-          icon="travel_explore"
-          label="Best Opportunity"
-          value={topOpp.route.destination}
-          delta={`SCORE: ${topOpp.opportunityScore}/100`}
-          deltaClass="text-tertiary"
-        />
-        <KpiCard
-          icon="account_balance_wallet"
-          label="Top Revenue Route"
-          value={topRev.route.destination}
-          delta={fmtUsd(topRev.whatIf.baseline.revenue.total_revenue_usd)}
-          deltaClass="text-tertiary"
-        />
-        <KpiCard
-          icon="beach_access"
-          label="Highest Tourism"
-          value={topTourism.route.destination}
-          delta={`${(topTourism.market.tourism_arrivals_baseline / 1e6).toFixed(1)}M arrivals`}
-          deltaClass="text-tertiary"
-        />
-        <KpiCard
-          icon="shield"
-          label="Low-Competition Routes"
-          value={`${lowCompCount} / ${rows.length}`}
-          delta="SCARCITY ADVANTAGE"
-          deltaClass="text-tertiary"
-        />
-        <KpiCard
-          icon="diversity_3"
-          label="Avg Competitors"
-          value={avgComp.toFixed(1)}
-          delta={avgComp > 3 ? "HIGH PRESSURE" : "MANAGEABLE"}
-          deltaClass={avgComp > 3 ? "text-error" : "text-tertiary"}
-        />
-      </section>
+      {/* Market share leaderboard */}
+      <MarketShareLeaderboard rows={marketRows} />
 
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-        <div className="lg:col-span-2">
-          <div className="glass-panel overflow-hidden rounded-lg">
-            <div className="flex items-center justify-between border-b border-white/10 bg-white/5 px-4 py-3">
-              <h3 className="text-lg font-semibold text-primary">Route Opportunity Ranking</h3>
-              <div className="flex gap-1">
-                {(["opportunity", "revenue", "demand"] as const).map((s) => (
-                  <button
-                    key={s}
-                    type="button"
-                    onClick={() => setSort(s)}
-                    className={`rounded px-2 py-1 font-label text-[10px] uppercase tracking-wider transition-colors ${
-                      sort === s
-                        ? "bg-tertiary/20 text-tertiary"
-                        : "text-on-surface-variant hover:text-on-surface"
-                    }`}
-                  >
-                    {s}
-                  </button>
-                ))}
-              </div>
-            </div>
-            <div className="overflow-x-auto">
-              <table className="w-full border-collapse text-left">
-                <thead className="bg-black/20 font-label text-[10px] uppercase tracking-wider text-on-surface-variant">
-                  <tr>
-                    <th className="px-4 py-3 font-normal">Route</th>
-                    <th className="px-4 py-3 font-normal">Demand Score</th>
-                    <th className="px-4 py-3 font-normal">Competition</th>
-                    <th className="px-4 py-3 font-normal">Revenue Potential</th>
-                    <th className="px-4 py-3 font-normal">Status</th>
-                    <th className="px-4 py-3 font-normal">Opp. Score</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-white/5 text-sm">
-                  {sorted.map((r) => {
-                    const demandNorm = maxPassengers > 0
-                      ? Math.round((r.demand.predicted_passengers / maxPassengers) * 100)
-                      : 0;
-                    return (
-                      <tr key={r.route.destination} className="transition-colors hover:bg-white/5">
-                        <td className="px-4 py-3">
-                          <div className="font-bold text-on-surface">SYD → {r.route.destination}</div>
-                          <div className="font-label text-[10px] text-on-surface-variant/60">
-                            {r.route.destination_city}
-                          </div>
-                        </td>
-                        <td className="px-4 py-3">
-                          <div className="flex items-center gap-2">
-                            <div className="h-1.5 w-14 overflow-hidden rounded-full bg-white/10">
-                              <div className="h-full bg-tertiary" style={{ width: `${demandNorm}%` }} />
-                            </div>
-                            <span className="font-label text-[10px] text-tertiary">{demandNorm}</span>
-                          </div>
-                          <div className="mt-0.5 font-label text-[10px] text-on-surface-variant/60">
-                            {fmtPax(r.demand.predicted_passengers)} pax
-                          </div>
-                        </td>
-                        <td className="px-4 py-3">
-                          <span
-                            className={`rounded border px-2 py-0.5 font-label text-[10px] ${COMP_BG[r.competition]} ${COMP_COLOR[r.competition]}`}
-                          >
-                            {r.competition}
-                          </span>
-                          <div className="mt-0.5 font-label text-[10px] text-on-surface-variant/60">
-                            {r.market.competitors.length} carriers
-                          </div>
-                        </td>
-                        <td className="px-4 py-3">
-                          <div className="font-bold text-on-surface">
-                            {fmtUsd(r.whatIf.baseline.revenue.total_revenue_usd)}
-                          </div>
-                          <div className="font-label text-[10px] text-on-surface-variant/60">
-                            ${r.demand.avg_fare_usd.toFixed(0)} avg fare
-                          </div>
-                        </td>
-                        <td className="px-4 py-3">
-                          <span
-                            className={`rounded border px-2 py-0.5 font-label text-[10px] ${
-                              r.route.status === "active"
-                                ? "border-tertiary/20 bg-tertiary/10 text-tertiary"
-                                : "border-secondary/20 bg-secondary/10 text-secondary"
-                            }`}
-                          >
-                            {r.route.status.toUpperCase()}
-                          </span>
-                        </td>
-                        <td className="px-4 py-3">
-                          <div
-                            className={`text-xl font-bold ${
-                              r.opportunityScore >= 70
-                                ? "text-tertiary"
-                                : r.opportunityScore >= 45
-                                ? "text-secondary"
-                                : "text-on-surface-variant"
-                            }`}
-                          >
-                            {r.opportunityScore}
-                          </div>
-                          <div className="mt-0.5 h-1 w-12 overflow-hidden rounded-full bg-white/10">
-                            <div
-                              className={`h-full ${
-                                r.opportunityScore >= 70
-                                  ? "bg-tertiary"
-                                  : r.opportunityScore >= 45
-                                  ? "bg-secondary"
-                                  : "bg-white/30"
-                              }`}
-                              style={{ width: `${r.opportunityScore}%` }}
-                            />
-                          </div>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-12">
+        {/* Competitor signals feed */}
+        <div className="glass-panel flex flex-col rounded-2xl lg:col-span-7">
+          <div className="flex items-center justify-between border-b border-white/10 p-4">
+            <h3 className="flex items-center gap-3 text-lg font-semibold text-on-surface">
+              <span className="material-symbols-outlined text-tertiary">rss_feed</span>
+              Competitor Signals Feed
+            </h3>
+            <span className="font-label text-[10px] uppercase tracking-widest text-on-surface-variant/40">
+              {signals.length} signals
+            </span>
           </div>
-        </div>
-
-        <div className="space-y-4">
-          <MiniBarPanel
-            title="GDP Growth by Market"
-            icon="bar_chart"
-            data={gdpSeries}
-            formatValue={(v) => `${v.toFixed(1)}%`}
-          />
-
-          <div className="glass-panel rounded-lg">
-            <div className="flex items-center justify-between border-b border-white/10 bg-white/5 px-4 py-3">
-              <h4 className="font-label text-[10px] uppercase tracking-widest text-primary">Competitor Signals</h4>
-              <Link
-                href="/copilot?q=Analyze+competitor+signals+and+recommend+counter-strategies+for+Pacific+Wings"
-                className="font-label text-[9px] uppercase tracking-widest text-tertiary transition-colors hover:text-tertiary/70"
-              >
-                VIEW ALL INTEL →
-              </Link>
-            </div>
-            <div className="divide-y divide-white/5">
-              {growthSignals.length === 0 ? (
-                <p className="p-4 text-sm text-on-surface-variant">No competitor data available.</p>
-              ) : (
-                growthSignals.map((s, i) => (
-                  <div key={i} className="flex items-start justify-between gap-2 px-4 py-3">
-                    <div>
-                      <div className="font-label text-[10px] text-on-surface-variant/60">
-                        SYD → {s.route} · {s.city}
-                      </div>
-                      <div className="text-sm text-on-surface">{s.competitor}</div>
+          <div className="flex-1 space-y-5 p-4">
+            {signals.length === 0 ? (
+              <p className="text-sm text-on-surface-variant">No competitor data available.</p>
+            ) : (
+              signals.map((s, i) => (
+                <div key={i} className="group flex gap-4">
+                  <div
+                    className={`w-1 self-stretch rounded-full opacity-40 transition-opacity group-hover:opacity-100 ${
+                      s.pressure ? "bg-error" : "bg-tertiary"
+                    }`}
+                  />
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-2">
+                      <span className="font-label text-[11px] uppercase text-tertiary">{s.competitor}</span>
+                      <span className="font-label text-[10px] text-on-surface-variant/60">
+                        SYD → {s.route.destination} · {s.route.destination_city}
+                      </span>
                     </div>
-                    <div className="text-right shrink-0">
-                      <div className="font-label text-[10px] text-secondary">{s.frequency}×/wk</div>
-                      <div className="font-label text-[10px] text-on-surface-variant/60">
-                        ${s.fare.toFixed(0)}/seat
-                      </div>
+                    <p className="text-sm text-on-surface transition-colors group-hover:text-white">
+                      Operating {s.frequency}×/week at ${s.fare.toFixed(0)} average fare ({s.rating.toFixed(1)}★
+                      service rating).
+                    </p>
+                    <div className="flex gap-2 pt-1">
+                      <span className="rounded border border-white/10 bg-white/5 px-2 py-0.5 font-label text-[10px] text-on-surface-variant">
+                        {s.route.destination} corridor
+                      </span>
+                      {s.pressure && (
+                        <span className="rounded border border-error/20 bg-error-container/20 px-2 py-0.5 font-label text-[10px] text-error">
+                          Contested market
+                        </span>
+                      )}
                     </div>
                   </div>
-                ))
-              )}
-            </div>
+                </div>
+              ))
+            )}
           </div>
+          <div className="border-t border-white/5 bg-white/[0.02] p-3 text-center">
+            <Link
+              href="/routes"
+              className="font-label text-[11px] uppercase tracking-widest text-on-surface-variant transition-colors hover:text-tertiary"
+            >
+              View deep-dive in Route Explorer →
+            </Link>
+          </div>
+        </div>
+
+        {/* Demand driver breakdown */}
+        <div className="lg:col-span-5">
+          <DemandDriversPanel market={driversMarket} />
         </div>
       </div>
 
-      <MarketShareLeaderboard rows={marketRows} />
+      {/* 12-month demand forecast */}
+      <section className="glass-panel rounded-2xl p-6">
+        <div className="mb-6 flex items-center justify-between">
+          <div>
+            <h3 className="text-lg font-semibold text-on-surface">12-Month Demand Forecast</h3>
+            <p className="text-sm text-on-surface-variant">
+              Predicted network passenger volume, {HORIZON[0].label} – {HORIZON[11].label} (active routes)
+            </p>
+          </div>
+        </div>
+        {forecast ? (
+          <>
+            <TrendLinePanel
+              title="Network demand · next 12 months"
+              icon="trending_up"
+              data={forecast.paxSeries}
+              formatValue={fmtPax}
+            />
+            <div className="mt-6 grid grid-cols-2 gap-4 lg:grid-cols-4">
+              <div className="space-y-1">
+                <p className="font-label text-[10px] uppercase tracking-widest text-on-surface-variant">Peak Month</p>
+                <p className="text-lg font-bold text-on-surface">{forecast.peakMonth.label}</p>
+                <p className="font-label text-[10px] text-tertiary">{fmtPax(forecast.peakMonth.value)} passengers</p>
+              </div>
+              <div className="space-y-1">
+                <p className="font-label text-[10px] uppercase tracking-widest text-on-surface-variant">
+                  Annual Passengers
+                </p>
+                <p className="text-lg font-bold text-on-surface">{fmtPax(forecast.annualPax)}</p>
+                <p className="font-label text-[10px] text-on-surface-variant/60">Sum of monthly forecasts</p>
+              </div>
+              <div className="space-y-1">
+                <p className="font-label text-[10px] uppercase tracking-widest text-on-surface-variant">
+                  Est. Load Factor
+                </p>
+                <p className="text-lg font-bold text-on-surface">{(forecast.avgLoadFactor * 100).toFixed(1)}%</p>
+                <p className="font-label text-[10px] text-on-surface-variant/60">Network yearly average</p>
+              </div>
+              <div className="space-y-1">
+                <p className="font-label text-[10px] uppercase tracking-widest text-on-surface-variant">
+                  Model Confidence
+                </p>
+                <p className="text-lg font-bold text-on-surface">{avgConfidencePct.toFixed(0)}%</p>
+                <p className="font-label text-[10px] text-on-surface-variant/60">Avg across current-month forecasts</p>
+              </div>
+            </div>
+          </>
+        ) : (
+          <div className="flex flex-col items-center gap-3 py-10">
+            <LoadingSpinner />
+            <p className="font-label text-[10px] text-on-surface-variant/60">
+              Running 12-month demand model for every active route…
+            </p>
+          </div>
+        )}
+      </section>
     </div>
   );
 }
