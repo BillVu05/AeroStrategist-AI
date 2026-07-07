@@ -82,11 +82,34 @@ single `non_fuel_casm` number is presented, not the total:
 | Sales, distribution, overheads | 10% |
 | Insurance & other | 5% |
 
+### Per-departure vs. per-ASK non-fuel costs
+
+Some non-fuel costs scale with departures, not distance flown: landing
+fees, per-passenger airport/terminal/security charges, and ground handling.
+A fixed per-departure charge is used per aircraft type (real-world
+magnitude estimates - narrowbody ~$2-5k, widebody ~$10-15k per
+international turnaround):
+
+| Aircraft | Per-departure charge |
+|---|---|
+| A320-200 | $3,500 |
+| A321neo | $5,000 |
+| B787-9 | $12,000 |
+
+These are **carved out of** the published-CASM-derived non-fuel rate, not
+added on top: the per-ASK rate is reduced by `per_departure x
+departures/ASK` at each type's current network route mix, so the
+Qantas-anchored network non-fuel total is unchanged - but short sectors now
+correctly cost more per seat-km than long ones, and aircraft swaps carry
+their real fixed-cost differences.
+
 ### Monthly route cost
 
 ```
-ASK_month  = seats_total * distance_km * (weekly_frequency * 4.345)
-total_cost = total_casm * ASK_month
+ASK_month        = seats_total * distance_km * (weekly_frequency * 4.345)
+departures_month = weekly_frequency * 4.345
+non_fuel_cost    = non_fuel_ask_casm * ASK_month + per_departure_usd * departures_month
+total_cost       = fuel_casm * ASK_month + non_fuel_cost
 ```
 
 `weekly_frequency = 0` (candidate routes) uses a notional reference
@@ -104,10 +127,14 @@ annual figures, not exact daily EIA pulls.
 
 ### Cabin fare multipliers
 
-The demand model's `avg_fare_usd` is a single blended fare. To split
-revenue by cabin, each cabin's fare is set as a multiple of an implied base
-(economy) fare, calibrated so the seat-mix-weighted average reproduces
-`avg_fare_usd`:
+The demand model's `avg_fare_usd` is on an **economy-fare scale**: the fare
+formula behind `demand_observations.csv` was calibrated against economy
+benchmark ranges (AU domestic ~$100-180, trans-Tasman ~$150-280, AU-Asia
+~$350-650), and `competitors.csv` fares are real spot-checked economy fares
+expressed as multiples of that same base. Each cabin's fare is a multiple
+of it, so the blended average revenue per passenger is `avg_fare_usd x
+weighted_multiplier` (~1.18x on the A320/A321neo two-class mix, ~1.46x on
+the B787-9 three-class mix):
 
 | Cabin | Fare multiple vs. economy |
 |---|---|
@@ -119,23 +146,30 @@ These multiples are within the range commonly cited for international fare
 structures (business fares roughly 3-4x economy, premium economy roughly
 1.5-2x).
 
+Premium cabins also sell fewer of their seats than economy (business runs
+~70-75% load factor vs. economy ~85%+ industry-wide), so passengers are
+allocated by seat share x a cabin fill weight (economy 1.0, premium economy
+0.85, business 0.7), renormalized:
+
 ```
-base_economy_fare = avg_fare_usd / weighted_multiplier
-weighted_multiplier = sum(seat_share[cabin] * multiplier[cabin])
-cabin_fare = base_economy_fare * multiplier[cabin]
-cabin_passengers = total_passengers * seat_share[cabin]
+fill[cabin] = seat_share[cabin] * fill_weight[cabin]
+cabin_passengers = total_passengers * fill[cabin] / sum(fill)
+cabin_fare = avg_fare_usd * multiplier[cabin]
 ticket_revenue = sum(cabin_passengers * cabin_fare)
+blended_avg_fare = ticket_revenue / total_passengers   (reported as blended_avg_fare_usd)
 ```
 
 ### Ancillary revenue
 
-A flat **$25/passenger** ancillary revenue (baggage fees, seat selection,
-lounge access, onboard sales) is applied - within the commonly-cited
-$15-30/passenger range for full-service international carriers per IATA
-ancillary revenue reports.
+Ancillary revenue per passenger (baggage fees, seat selection, lounge
+access, onboard sales) scales with journey length - $15 base + 0.2c/km,
+capped at 10,000 km: ~$16 domestic, ~$28 medium-haul, $35 long-haul. The
+range is consistent with the $15-35/passenger cited for full-service
+international carriers in IATA ancillary revenue reports.
 
 ```
-ancillary_revenue = total_passengers * 25
+ancillary_per_pax = 15 + 0.002 * min(distance_km, 10000)
+ancillary_revenue = total_passengers * ancillary_per_pax
 total_revenue     = ticket_revenue + ancillary_revenue
 ```
 
@@ -146,17 +180,24 @@ model over Pacific Wings and the synthetic competitors in
 `data/processed/competitors.csv`:
 
 ```
-utility_i = BETA_PRICE * price_i + BETA_FREQUENCY * weekly_frequency_i + BETA_RATING * rating_i
+utility_i = BETA_LN_PRICE * ln(price_i) + BETA_FREQUENCY * log1p(weekly_frequency_i) + BETA_RATING * rating_i
 share_i   = exp(utility_i) / sum_j(exp(utility_j))
 ```
 
-Calibration constants (`BETA_PRICE=-0.01`, `BETA_FREQUENCY=0.15`,
-`BETA_RATING=1.0`) are illustrative, chosen so price, frequency, and rating
-each have a visible but non-dominant effect on share at the magnitudes seen
-in this dataset (fares ~$100-500, frequencies ~3-21/week, ratings ~3.8-4.3).
-Pacific Wings' own rating defaults to **4.1**. This is a relative,
-what-if-comparison tool, not a model fitted to real market-share data (which
-isn't publicly available at route level).
+Price and frequency both enter in log form: fares span $25-720 and weekly
+frequencies 3-259 across routes, and linear terms would make a $100 or
+100-flight gap mean the same thing everywhere. Log terms give a constant
+share response to a given *percentage* difference on every route (standard
+log-log logit form).
+
+Calibration constants (`BETA_LN_PRICE=-0.7`, `BETA_FREQUENCY=0.4`,
+`BETA_RATING=1.8`) are illustrative, chosen so price, frequency, and rating
+each have a visible but non-dominant effect - and cross-checked against the
+one real benchmark available (BITRE AU-Singapore traffic): Singapore
+Airlines models at ~62% share on SYD-SIN vs. its real ~60%. Pacific Wings'
+own rating defaults to **4.1**. This is a relative, what-if-comparison
+tool, not a model fitted to real market-share data (which isn't publicly
+available at route level).
 
 ## Simulation engine (Phase 7)
 

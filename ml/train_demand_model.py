@@ -5,10 +5,18 @@ own average fare and month, against the `demand_observations` ground truth -
 real BITRE-derived figures for SIN/HND/AKL/DAD, a synthetic formula for
 SYD-MEL (see etl/fetch_real_aviation_stats.py, the real-data rebuild Phase 3).
 
-Train/test split is time-based: train on 2022-2023, test on 2024, so the
-model is evaluated on its ability to forecast a future, unseen year. This
-is the headline metric, reported in models/metrics.json's top-level
-mae/mape/r2 fields.
+2022 is excluded from the data entirely: it was the COVID border-reopening
+ramp (Japan only reopened to tourism in Oct 2022 - HND averaged 0.16 load
+factor in 2022 vs 0.57 in 2024), unrepresentative of the steady state the
+simulator forecasts, and training on it dragged deployed HND predictions to
+roughly half of 2024 actuals.
+
+Train/test split is time-based: train on 2023, test on 2024, so the model
+is evaluated on its ability to forecast a future, unseen year. This is the
+headline metric, reported in models/metrics.json's top-level mae/mape/r2
+fields. The DEPLOYED model (and bootstrap ensemble) is then refit on all
+rows including the holdout year - the holdout grades the protocol; the
+saved model shouldn't be blind to the most recent year of data.
 
 Phase 5 (real-data rebuild) adds two validation-rigor pieces alongside that
 headline split, both also written to models/metrics.json:
@@ -70,6 +78,7 @@ DATABASE_URL = os.environ.get(
 )
 
 TEST_YEAR = 2024
+MIN_TRAIN_YEAR = 2023  # 2022 = COVID reopening ramp, excluded (see module docstring)
 N_CV_FOLDS = 5
 CV_RANDOM_STATE = 42
 N_BOOTSTRAP = 30
@@ -156,19 +165,27 @@ def compute_feature_ranges(X_train: pd.DataFrame) -> dict:
 
 
 def load_observations(engine) -> pd.DataFrame:
-    return pd.read_sql(
-        """
-        SELECT r.destination, d.year, d.month, d.passengers, d.avg_fare_usd
-        FROM demand_observations d
-        JOIN routes r ON r.route_id = d.route_id
-        """,
-        engine,
-    )
+    try:
+        return pd.read_sql(
+            """
+            SELECT r.destination, d.year, d.month, d.passengers, d.avg_fare_usd
+            FROM demand_observations d
+            JOIN routes r ON r.route_id = d.route_id
+            """,
+            engine,
+        )
+    except Exception:
+        # DB not running - fall back to the CSV the DB is loaded from
+        # (etl/load_db.py); identical rows, so training is unaffected.
+        csv = pd.read_csv(ROOT / "data" / "processed" / "demand_observations.csv")
+        print("Postgres unavailable - training from data/processed/demand_observations.csv")
+        return csv[["destination", "year", "month", "passengers", "avg_fare_usd"]]
 
 
 def main() -> None:
     engine = create_engine(DATABASE_URL)
     obs = load_observations(engine)
+    obs = obs[obs["year"] >= MIN_TRAIN_YEAR].reset_index(drop=True)
     ref = ReferenceData()
 
     feature_rows = [
@@ -194,10 +211,15 @@ def main() -> None:
         obs.loc[~train_mask, "destination"], y_test, pred
     )
 
+    # Deployed model: refit on ALL rows including the holdout year (the
+    # holdout metrics above grade the protocol, not this final model).
+    model = xgb.XGBRegressor(**MODEL_PARAMS)
+    model.fit(X, y)
+
     importances = dict(zip(FEATURE_COLUMNS, model.feature_importances_.astype(float)))
 
     print(f"\nTraining {N_BOOTSTRAP}-model bootstrap ensemble for confidence scoring...")
-    train_bootstrap_ensemble(X_train, y_train)
+    train_bootstrap_ensemble(X, y)
 
     metrics = {
         "test_year": TEST_YEAR,
@@ -210,9 +232,10 @@ def main() -> None:
         "residual_quantiles": residual_quantiles,
         "residual_quantiles_by_route": residual_quantiles_by_route,
         "feature_importances": importances,
-        "feature_ranges": compute_feature_ranges(X_train),
-        "train_year_min": int(obs.loc[train_mask, "year"].min()),
-        "train_year_max": int(obs.loc[train_mask, "year"].max()),
+        # Ranges/years describe the DEPLOYED (refit-on-all-rows) model.
+        "feature_ranges": compute_feature_ranges(X),
+        "train_year_min": int(obs["year"].min()),
+        "train_year_max": int(obs["year"].max()),
         "n_bootstrap": N_BOOTSTRAP,
     }
 

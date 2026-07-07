@@ -3,7 +3,7 @@ Phase 5 (real-data rebuild) Monte Carlo scenario simulator.
 
 `simulation/engine.py`'s `SimulationEngine` answers "what happens under
 THESE specific assumptions" (Phase 7, deterministic). This module answers
-"what's the plausible RANGE of outcomes, given real uncertainty in three
+"what's the plausible RANGE of outcomes, given real uncertainty in four
 inputs nobody at Pacific Wings controls" - by sampling those inputs from
 distributions and running many `SimulationEngine` passes.
 
@@ -29,6 +29,12 @@ Distributions, and why:
     Pacific Wings' fare. Centred on the same 10% point assumption already
     used by `simulation/presets.py`'s `competitor_entry` preset, but as a
     probability distribution instead of an on/off toggle.
+  - Demand-model error: the demand forecast itself is uncertain - often the
+    largest uncertainty in a scenario. Each trial multiplies the point
+    prediction by a normal noise term whose spread is the model's REAL
+    holdout residual spread for this route (models/metrics.json,
+    p10-p90 converted to a sigma), so routes the model historically
+    forecast poorly get wider profit bands.
 
 Fare (a controlled decision variable, not an external uncertainty) is held
 fixed per-trial at whatever `price_delta_pct` the caller passes - consistent
@@ -36,6 +42,7 @@ with how the deterministic `/what_if` treats price as a lever, not a
 random variable.
 """
 
+import json
 import sys
 from pathlib import Path
 
@@ -71,6 +78,24 @@ _macro = pd.read_csv(ROOT / "data" / "reference" / "macro_indicators.csv")
 GDP_GROWTH_STD_BY_COUNTRY = _macro.groupby("country")["gdp_growth_pct"].std().to_dict()
 DEFAULT_GDP_GROWTH_STD = float(_macro["gdp_growth_pct"].std())
 
+_METRICS = json.loads((ROOT / "models" / "metrics.json").read_text())
+
+# Demand-model error: the largest real uncertainty in any scenario, sampled
+# per-trial from the model's own holdout residual spread (per-route where
+# available, pooled otherwise). p90-p10 of a normal spans 2.5631 sigma.
+DEMAND_NOISE_REL_STD_MIN = 0.02
+DEMAND_NOISE_REL_STD_MAX = 0.50
+DEMAND_NOISE_CLIP = (0.3, 1.7)
+
+
+def _demand_noise_rel_std(destination: str, baseline_predicted_pax: float) -> float:
+    quantiles = _METRICS.get("residual_quantiles_by_route", {}).get(
+        destination, _METRICS["residual_quantiles"]
+    )
+    sigma_abs = (quantiles["p90"] - quantiles["p10"]) / 2.5631
+    rel = sigma_abs / max(baseline_predicted_pax, 1.0)
+    return float(np.clip(rel, DEMAND_NOISE_REL_STD_MIN, DEMAND_NOISE_REL_STD_MAX))
+
 
 def _summarize(values: np.ndarray) -> dict:
     return {
@@ -97,12 +122,12 @@ def run_monte_carlo(
     **scenario_kwargs,
 ) -> dict:
     """Runs `n_simulations` `SimulationEngine.run_scenario` passes with fuel
-    price, GDP growth, and competitor entry randomized per-trial (see module
-    docstring), returning summary statistics and a profit histogram instead
-    of a single point estimate.
+    price, GDP growth, competitor entry, and demand-model error randomized
+    per-trial (see module docstring), returning summary statistics and a
+    profit histogram instead of a single point estimate.
 
     `scenario_kwargs` (price_delta_pct, frequency_delta, aircraft_type,
-    rating_delta) are held fixed across all trials - only the three
+    rating_delta) are held fixed across all trials - only the four
     uncertain inputs above are randomized.
 
     `fuel_price_center` optionally shifts the real lognormal fuel-price
@@ -128,6 +153,14 @@ def run_monte_carlo(
     competitor_enters = rng.random(n_simulations) < COMPETITOR_ENTRY_PROBABILITY
     competitor_discounts = rng.triangular(*COMPETITOR_DISCOUNT_TRIANGULAR, size=n_simulations)
 
+    baseline_pred = engine.run_scenario(destination, year, month, **scenario_kwargs)[
+        "demand"
+    ]["predicted_demand_passengers"]
+    demand_rel_std = _demand_noise_rel_std(destination, baseline_pred)
+    demand_noise = np.clip(
+        rng.normal(1.0, demand_rel_std, size=n_simulations), *DEMAND_NOISE_CLIP
+    )
+
     base_fare = engine.ref.default_avg_fare(destination)
     base_frequency = route["weekly_frequency"] or NOTIONAL_CANDIDATE_FREQUENCY
 
@@ -140,6 +173,7 @@ def run_monte_carlo(
         trial_kwargs = dict(scenario_kwargs)
         trial_kwargs["fuel_price_usd_per_gallon"] = round(float(fuel_prices[i]), 3)
         trial_kwargs["gdp_growth_pct_override"] = float(gdp_growth_samples[i])
+        trial_kwargs["demand_noise_multiplier"] = float(demand_noise[i])
         if competitor_enters[i]:
             trial_kwargs["extra_competitors"] = [
                 {
@@ -182,6 +216,12 @@ def run_monte_carlo(
                 "probability": COMPETITOR_ENTRY_PROBABILITY,
                 "discount_range_pct": [round(d * 100, 1) for d in COMPETITOR_DISCOUNT_TRIANGULAR],
                 "source": "Illustrative assumption, not fitted to real data (no public source exists)",
+            },
+            "demand_model_error": {
+                "distribution": "normal multiplier on predicted demand",
+                "rel_std": round(demand_rel_std, 4),
+                "clip_range": list(DEMAND_NOISE_CLIP),
+                "source": f"Real {destination} holdout residual spread (p10-p90), models/metrics.json",
             },
         },
         "profit_usd": _summarize(profits),

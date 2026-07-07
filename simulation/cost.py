@@ -8,6 +8,7 @@ varied as a what-if lever without touching the rest of the cost base.
 """
 
 import json
+from collections import defaultdict
 from pathlib import Path
 
 import pandas as pd
@@ -18,6 +19,20 @@ KG_PER_GALLON = 3.03
 BASELINE_FUEL_PRICE_USD_PER_GALLON = 1.74  # 2019 EIA annual average
 WEEKS_PER_MONTH = 4.345
 NOTIONAL_CANDIDATE_FREQUENCY = 3
+
+# Per-departure charges (landing fee + per-passenger airport/terminal/security
+# charges + ground handling), USD per departure - real-world magnitude
+# estimates: narrowbody ~$2-5k, widebody ~$10-15k per international turnaround.
+# These are carved OUT of the published-CASM-derived non-fuel rate (see
+# CostModel.non_fuel_unit_costs), not added on top, so the Qantas-anchored
+# calibration total is preserved at each type's current network route mix -
+# but short sectors now correctly cost more per seat-km than long ones, and
+# frequency/aircraft what-ifs carry their real fixed-cost differences.
+PER_DEPARTURE_COST_USD = {
+    "A320-200": 3500.0,
+    "A321neo": 5000.0,
+    "B787-9": 12000.0,
+}
 
 # Indicative split of non-fuel CASM into display categories.
 # See docs/cost_assumptions.md - illustrative only, does not affect totals.
@@ -65,6 +80,33 @@ class CostModel:
         profile = json.loads((ROOT / "data" / "airline_profile.json").read_text())
         self.routes_by_destination = {r["destination"]: r for r in profile["routes"]}
 
+        # Departures-per-ASK at each type's current ACTIVE network mix -
+        # the rebate rate that keeps non_fuel_unit_costs anchor-neutral.
+        deps: dict[str, float] = defaultdict(float)
+        ask: dict[str, float] = defaultdict(float)
+        for route in self.routes_by_destination.values():
+            frequency = route["weekly_frequency"]
+            if not frequency:
+                continue  # candidate routes don't shape the calibration mix
+            aircraft = self.fleet_by_type[route["assigned_aircraft"]]
+            deps[aircraft["type"]] += frequency
+            ask[aircraft["type"]] += aircraft["seats"]["total"] * route["distance_km"] * frequency
+        self.departures_per_ask = {t: deps[t] / ask[t] for t in deps}
+
+    def non_fuel_unit_costs(self, aircraft_type: str) -> tuple[float, float]:
+        """(per-ASK non-fuel CASM, per-departure USD) for an aircraft type.
+
+        The per-departure charge is subtracted from the published-CASM-derived
+        non-fuel rate at the type's current network route mix, so each type's
+        network non-fuel total is unchanged (the calibration anchor holds)
+        while cost now scales correctly with departures vs. distance.
+        """
+        aircraft = self.fleet_by_type[aircraft_type]
+        per_departure = PER_DEPARTURE_COST_USD.get(aircraft_type, 0.0)
+        # Type not in the active network -> no rebate (slightly conservative).
+        rebate_rate = self.departures_per_ask.get(aircraft_type, 0.0)
+        return _non_fuel_casm(aircraft) - per_departure * rebate_rate, per_departure
+
     def monthly_cost(
         self,
         destination: str,
@@ -84,13 +126,14 @@ class CostModel:
             weekly_frequency = route["weekly_frequency"] or NOTIONAL_CANDIDATE_FREQUENCY
 
         ask_month = aircraft["seats"]["total"] * route["distance_km"] * weekly_frequency * WEEKS_PER_MONTH
+        departures_month = weekly_frequency * WEEKS_PER_MONTH
 
-        non_fuel_casm = _non_fuel_casm(aircraft)
+        non_fuel_ask_casm, per_departure_usd = self.non_fuel_unit_costs(aircraft["type"])
         fuel_casm = _fuel_casm(aircraft, fuel_price_usd_per_gallon)
-        total_casm = non_fuel_casm + fuel_casm
 
         fuel_cost = fuel_casm * ask_month
-        non_fuel_cost = non_fuel_casm * ask_month
+        non_fuel_cost = non_fuel_ask_casm * ask_month + per_departure_usd * departures_month
+        total_casm = (fuel_cost + non_fuel_cost) / ask_month if ask_month > 0 else 0.0
 
         non_fuel_breakdown = {
             category: round(non_fuel_cost * share, 2)
@@ -103,6 +146,8 @@ class CostModel:
             "weekly_frequency": weekly_frequency,
             "fuel_price_usd_per_gallon": fuel_price_usd_per_gallon,
             "ask_month": round(ask_month),
+            "departures_month": round(departures_month, 1),
+            "per_departure_cost_usd": per_departure_usd,
             "fuel_cost_usd": round(fuel_cost, 2),
             "non_fuel_cost_usd": round(non_fuel_cost, 2),
             "non_fuel_cost_breakdown_usd": non_fuel_breakdown,

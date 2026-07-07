@@ -36,25 +36,23 @@ from world_airports import (  # noqa: E402
     SYD_LAT,
     SYD_LON,
 )
+from cost import CostModel  # noqa: E402
+from revenue import CABIN_FARE_MULTIPLIERS, CABIN_FILL_WEIGHTS, ancillary_per_pax_usd  # noqa: E402
 
 # ─── constants ────────────────────────────────────────────────────────────────
 
 KG_PER_GALLON = 3.03
 WEEKS_PER_MONTH = 4.345
-BASELINE_FUEL_USD_PER_GAL = 2.40   # near-term projected (2025)
-
-ANCILLARY_PER_PAX = 25.0          # USD, consistent with revenue.py
-
-CABIN_FARE_MULTIPLIERS = {
-    "economy": 1.0,
-    "premium_economy": 1.6,
-    "business": 3.2,
-}
+BASELINE_FUEL_USD_PER_GAL = 2.40   # near-term projected (2025), scenario default
+BLOCK_TIME_OVERHEAD_H = 0.5        # taxi + climb/descent time beyond cruise, per sector
 
 # ─── aircraft specs (mirrors aircraft_specs.json) ────────────────────────────
 
 _specs_raw = json.loads((ROOT / "data" / "aircraft_specs.json").read_text())["aircraft"]
 AIRCRAFT: dict[str, dict] = {ac["type"]: ac for ac in _specs_raw}
+
+# Calibrated per-ASK/per-departure non-fuel cost split (simulation/cost.py).
+_COST_MODEL = CostModel()
 
 # Aircraft selection by distance (with 5% reserve buffer: A320→5842km, A321neo→7030km, B787→13433km)
 def _select_aircraft(distance_km: float) -> str:
@@ -95,27 +93,36 @@ _DIST_DECAY   = 1.30        # distance exponent (calibrated)
 # Short-haul special case: domestic/trans-Tasman markets
 # have much higher density than the gravity model predicts.
 _SHORT_HAUL_KM = 2_500
-_SHORT_HAUL_MARKET = 5_000_000   # conservative floor for dense AU-NZ routes
+_SHORT_HAUL_MARKET = 5_000_000   # dense-market base, capped by destination size below
 
 
-def _bilateral_market(gdp_dest_b: float, distance_km: float, tourism_m: float) -> float:
+def _bilateral_market(gdp_dest_b: float, distance_km: float, tourism_m: float, pop_m: float) -> float:
     """
     Total bilateral O&D market estimate (all carriers, annual passengers).
 
     Calibrated against the SYD-SIN route (3.5M/yr). Uses log-damped GDP ratio
     to prevent over-prediction for very large economies (US, China), and a
     square-root tourism factor so high-tourism destinations get a modest uplift.
+
+    Capped by destination size: a city-pair market can't exceed what the
+    destination's own population and visitor volume can generate. Calibrated
+    against real markets (SYD-MEL ~9M/yr, AU pop 27M; SYD-AKL ~1.6M/yr, NZ
+    pop 5.3M + 3.9M tourists; SYD-NAN ~0.4-0.5M/yr, Fiji pop 0.9M + 0.9M
+    tourists) - without the cap, small/island destinations inherited
+    metro-sized gravity estimates from the distance term alone.
     """
+    market_cap = (0.30 * pop_m + 0.15 * tourism_m) * 1_000_000
+
     if distance_km < _SHORT_HAUL_KM:
-        # Short-haul: flat reference scaled by GDP only
+        # Short-haul: flat dense-market base scaled by GDP only
         gdp_scale = (math.log(max(gdp_dest_b, 10)) / math.log(_REF_GDP_B)) ** 0.4
-        return min(_SHORT_HAUL_MARKET * gdp_scale, 12_000_000)
+        return min(_SHORT_HAUL_MARKET * gdp_scale, market_cap)
 
     gdp_ratio  = (math.log(max(gdp_dest_b, 10)) / math.log(_REF_GDP_B)) ** 0.5
     dist_ratio = (_REF_DIST_KM / distance_km) ** _DIST_DECAY
     tour_ratio = math.sqrt(_tourism_factor(tourism_m) / _tourism_factor(_REF_TOURISM))
 
-    return _REF_MARKET * gdp_ratio * dist_ratio * tour_ratio
+    return min(_REF_MARKET * gdp_ratio * dist_ratio * tour_ratio, market_cap)
 
 
 # Pacific Wings market share model for a new route
@@ -258,7 +265,7 @@ def analyze_open_route(
     total_seats = seats["total"]
 
     # ── 3. Market size estimation (calibrated bilateral model) ────────────────
-    market_pax_annual = _bilateral_market(gdp_dest_b, distance_km, tourism_m)
+    market_pax_annual = _bilateral_market(gdp_dest_b, distance_km, tourism_m, pop_dest_m)
 
     # Estimate number of existing competitors if not provided
     if n_existing_carriers is None:
@@ -286,18 +293,28 @@ def analyze_open_route(
     high_pax = round(passengers_annual * 1.40)
 
     # ── 4. Fare & revenue estimation ──────────────────────────────────────────
-    avg_fare = avg_fare_usd if avg_fare_usd is not None else _estimate_fare(distance_km)
-
-    # Weighted blended fare across cabin mix
     seat_shares = {cabin: seats.get(cabin, 0) / total_seats for cabin in CABIN_FARE_MULTIPLIERS}
-    weighted_multiplier = sum(seat_shares.get(c, 0) * m for c, m in CABIN_FARE_MULTIPLIERS.items())
-    base_economy_fare = avg_fare / weighted_multiplier if weighted_multiplier > 0 else avg_fare
-
-    ticket_rev_monthly = sum(
-        passengers_monthly * seat_shares.get(c, 0) * base_economy_fare * m
-        for c, m in CABIN_FARE_MULTIPLIERS.items()
+    fill = {c: seat_shares[c] * CABIN_FILL_WEIGHTS[c] for c in CABIN_FARE_MULTIPLIERS}
+    total_fill = sum(fill.values()) or 1.0
+    # Realized blended-fare multiplier over economy: cabin passenger shares
+    # are seat share x fill weight (premium cabins fill less than economy),
+    # renormalized - mirrors simulation/revenue.py.
+    realized_multiplier = sum(
+        (fill[c] / total_fill) * m for c, m in CABIN_FARE_MULTIPLIERS.items()
     )
-    ancillary_rev_monthly = passengers_monthly * ANCILLARY_PER_PAX
+
+    # _estimate_fare's formula was calibrated against spot-checked ECONOMY
+    # fares (see etl/generate_synthetic_demand.py), so the auto-estimated
+    # blended average scales it up by the realized cabin mix. A user-supplied
+    # avg_fare_usd is taken as the already-blended average.
+    if avg_fare_usd is not None:
+        avg_fare = avg_fare_usd
+    else:
+        avg_fare = _estimate_fare(distance_km) * realized_multiplier
+
+    ticket_rev_monthly = passengers_monthly * avg_fare
+    ancillary_rate = ancillary_per_pax_usd(distance_km)
+    ancillary_rev_monthly = passengers_monthly * ancillary_rate
     total_rev_monthly = ticket_rev_monthly + ancillary_rev_monthly
     total_rev_annual = total_rev_monthly * 12
 
@@ -305,16 +322,22 @@ def analyze_open_route(
     fuel_price = fuel_price_usd_per_gallon or BASELINE_FUEL_USD_PER_GAL
     fuel_burn_kg_h = aircraft["cruise_fuel_burn_kg_per_hour"]
     speed_kmh = aircraft["cruise_speed_kmh"]
-    flight_hours = distance_km / speed_kmh
+    # Block time = cruise + taxi/climb/descent overhead per sector.
+    flight_hours = distance_km / speed_kmh + BLOCK_TIME_OVERHEAD_H
 
     fuel_cost_per_sector = fuel_burn_kg_h * flight_hours * (fuel_price / KG_PER_GALLON)
-    fuel_cost_monthly = fuel_cost_per_sector * 2 * weekly_frequency * WEEKS_PER_MONTH  # 2 legs
+    # One-direction accounting throughout: capacity, ASK, and revenue all
+    # count weekly_frequency sectors, and the return leg is symmetric - so
+    # fuel counts those same sectors (a x2 here double-charged fuel against
+    # one leg's revenue and made every route unprofitable).
+    fuel_cost_monthly = fuel_cost_per_sector * weekly_frequency * WEEKS_PER_MONTH
 
     ask_monthly = total_seats * distance_km * weekly_frequency * WEEKS_PER_MONTH
-    non_fuel_casm = aircraft["casm_usd"] - (
-        fuel_burn_kg_h * (BASELINE_FUEL_USD_PER_GAL / KG_PER_GALLON) / (total_seats * speed_kmh)
-    )
-    non_fuel_cost_monthly = non_fuel_casm * ask_monthly
+    departures_monthly = weekly_frequency * WEEKS_PER_MONTH
+    # Calibrated per-ASK + per-departure split (simulation/cost.py) - short
+    # sectors amortize fixed departure charges over fewer km.
+    non_fuel_ask_casm, per_departure_usd = _COST_MODEL.non_fuel_unit_costs(aircraft_type)
+    non_fuel_cost_monthly = non_fuel_ask_casm * ask_monthly + per_departure_usd * departures_monthly
 
     total_cost_monthly = fuel_cost_monthly + non_fuel_cost_monthly
     total_cost_annual = total_cost_monthly * 12
@@ -325,7 +348,9 @@ def analyze_open_route(
 
     # Breakeven load factor
     cost_per_pax = total_cost_monthly / passengers_monthly if passengers_monthly > 0 else 0
-    breakeven_pax_monthly = total_cost_monthly / avg_fare if avg_fare > 0 else 0
+    # Each passenger contributes fare + ancillary, so breakeven counts both.
+    revenue_per_pax = avg_fare + ancillary_rate
+    breakeven_pax_monthly = total_cost_monthly / revenue_per_pax if revenue_per_pax > 0 else 0
     breakeven_lf = breakeven_pax_monthly / (total_seats * weekly_frequency * WEEKS_PER_MONTH)
 
     # ── 6. Risk scoring (0=low, 1=moderate, 2=elevated, 3=high) ──────────────
@@ -588,3 +613,14 @@ def compare_route_alternatives(
         "ranked_routes": results,
         "errors": errors,
     }
+
+
+if __name__ == "__main__":
+    # Self-check: cost/revenue accounting must be internally consistent -
+    # major established markets should never show a >100% breakeven LF.
+    for _dest in ("SIN", "AKL", "LAX", "LHR"):
+        _r = analyze_open_route(_dest)
+        _f = _r["financials"]
+        assert 0 < _f["breakeven_load_factor"] < 1.0, (_dest, _f)
+        assert _f["monthly_revenue_usd"] > 0 and _f["monthly_cost_usd"] > 0, (_dest, _f)
+    print("open_route_analyst self-check OK")

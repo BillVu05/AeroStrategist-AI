@@ -58,10 +58,13 @@ ROUTE_SEASONALITY = {
     "DAD": "leisure",
 }
 
-# Fare model: blended average fare (USD) ~ flat fee + per-km rate, with
-# diminishing per-km rate on long-haul (economies of scale). Calibrated to
-# rough published regional benchmark ranges (AU domestic ~$100-180,
-# trans-Tasman ~$150-280, AU-Asia long-haul ~$350-650).
+# Fare model: economy-level average fare (USD) ~ flat fee + per-km rate,
+# with diminishing per-km rate on long-haul (economies of scale). Calibrated
+# to rough published regional ECONOMY benchmark ranges (AU domestic
+# ~$100-180, trans-Tasman ~$150-280, AU-Asia long-haul ~$350-650); the
+# COMPETITORS fare multipliers below were likewise derived from real
+# spot-checked economy fares. Premium-cabin uplift is applied downstream by
+# simulation/revenue.py's cabin multipliers, not baked into this fare.
 FARE_BASE_USD = 60.0
 FARE_PER_KM_SHORT = 0.075   # applied up to 2000 km
 FARE_PER_KM_LONG = 0.045    # applied beyond 2000 km

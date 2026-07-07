@@ -63,6 +63,7 @@ class SimulationEngine:
         gdp_usd_override: float | None = None,
         gdp_growth_pct_override: float | None = None,
         population_override: float | None = None,
+        demand_noise_multiplier: float = 1.0,
     ) -> dict:
         route = self.ref.route(destination)
 
@@ -90,6 +91,10 @@ class SimulationEngine:
         X = pd.DataFrame([features])[self._feature_columns]
         predicted_passengers = float(self._model.predict(X)[0])
         confidence = self.confidence_model.score(destination, year, features, X, predicted_passengers)
+        # Monte Carlo hook: perturbs the point prediction by real holdout
+        # residual spread (simulation/monte_carlo.py). Applied AFTER
+        # confidence scoring, which describes the model's own prediction.
+        predicted_passengers *= demand_noise_multiplier
 
         capacity_monthly = self.ref.capacity_monthly(
             destination, aircraft_type=scenario_aircraft, weekly_frequency=scenario_frequency
