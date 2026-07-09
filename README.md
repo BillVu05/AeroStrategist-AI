@@ -4,6 +4,13 @@ A simulation and analytics platform for **Pacific Wings**, a fictional airline
 based at Sydney (SYD), grounded in real airport, geographic, and macroeconomic
 data. See [PLAN.md](PLAN.md) for the full project roadmap.
 
+**For the full math** behind every forecast — demand, revenue, cost, market
+share, Monte Carlo, macro projections, and the worldwide open-route gravity
+model — see [`docs/calculations_and_models.md`](docs/calculations_and_models.md).
+That doc also explains what specifically makes the modeling approach go
+beyond a typical toy simulator (extrapolation-safe forecasting, a three-signal
+confidence score, calibrated-not-fitted market models, and more).
+
 ## Data model
 
 | Tier | What it is | Source |
@@ -138,6 +145,35 @@ Scenario params (all optional, default 0/unchanged): `price_delta_pct`,
 `rating_delta`. See `docs/cost_assumptions.md` for the market share and
 simulation engine methodology.
 
+### Named presets
+
+`/what_if_presets` lists three ready-made scenarios (`simulation/presets.py`)
+that can be passed as `preset=` instead of, or alongside, manual deltas:
+
+```bash
+curl "http://127.0.0.1:8000/what_if_presets"
+curl "http://127.0.0.1:8000/what_if?destination=SIN&year=2025&month=7&preset=fuel_price_shock"
+```
+
+`fuel_price_shock` (+30% fuel), `tourism_boom` (+20% tourism arrivals),
+`competitor_entry` (a new carrier enters 10% below Pacific Wings' fare).
+
+### Monte Carlo scenario simulator
+
+`/monte_carlo` runs the same scenario hundreds of times with fuel price, GDP
+growth, competitor entry, and demand-model error each randomized from a
+distribution grounded in real historical volatility (see
+`docs/calculations_and_models.md` §6), returning a full outcome distribution
+instead of one point estimate:
+
+```bash
+curl "http://127.0.0.1:8000/monte_carlo?destination=SIN&year=2025&month=7&n_simulations=500"
+```
+
+Returns percentiles (p10-p90) for profit, passengers, load factor, and market
+share, a profit histogram, and `probability_of_loss` — the fraction of
+trials where the scenario loses money.
+
 ## Future analysis & macro projections
 
 Three endpoints project economic fundamentals and route P&L forward across a
@@ -180,6 +216,43 @@ simulation/
   future_analysis.py     Route fundamentals, multi-year P&L, network ranking
 ```
 
+## Open-route exploration: any airport worldwide
+
+Every endpoint above operates on Pacific Wings' five known routes. This
+engine (`agents/open_route_analyst.py`) answers a different question — "what
+if Pacific Wings flew somewhere it never has?" — using a gravity model
+calibrated against real bilateral markets instead of the trained demand
+model (no training data exists for an arbitrary new city pair). Full
+methodology in `docs/calculations_and_models.md` §10.
+
+```bash
+# Search the worldwide airport database (autocomplete / resolve a city name)
+curl "http://127.0.0.1:8000/search_airports?query=Da Nang"
+
+# Full feasibility analysis for any IATA code or city name
+curl "http://127.0.0.1:8000/analyze_route?destination=LHR&weekly_frequency=3"
+
+# Same, plus a 5-agent Gemini narrative layer (Market/Risk/Strategy commentary)
+curl "http://127.0.0.1:8000/analyze_route_agents?destination=LHR"
+
+# Rank 2-8 candidate destinations side by side
+curl "http://127.0.0.1:8000/compare_routes?destinations=LHR,DXB,JFK"
+```
+
+Returns bilateral market size, revenue/cost/profit estimates, breakeven load
+factor, a 5-dimension risk score, a 0-100 composite strategic score, a
+PROCEED/CAUTION/DO NOT PROCEED/NOT FEASIBLE verdict, and a generated
+pros/cons list — all order-of-magnitude estimates (±30-40%), explicitly
+distinct from the precision `SimulationEngine` analysis available for routes
+already in the network.
+
+```
+agents/
+  world_airports.py       Global airport database, haversine distance, per-country macro table
+  open_route_analyst.py   Gravity model, cost/revenue/risk scoring, verdict logic
+  open_route_agents.py    5-agent Gemini narrative layer for open-route analysis
+```
+
 ## AI agents & copilot (Phases 8-9)
 
 `/copilot` runs a LangGraph pipeline (`agents/graph.py`) of five agents:
@@ -205,34 +278,60 @@ market/risk/strategy commentary; without it, those sections return
 (simulation results) are returned as normal. Optionally override the model
 via `GEMINI_MODEL` (defaults to `gemini-2.5-flash`).
 
+### Conversational copilot (`/chat`)
+
+An alternative to the fixed `/copilot` pipeline: one Gemini conversation per
+turn using automatic function calling over **12 tools**
+(`agents/chat_agent.py`) spanning the entire stack — route lookup,
+deterministic simulation, Monte Carlo, market context, multi-year demand
+trend, network opportunity ranking, macro projection, long-term route
+analysis/ranking, and open-route analysis/comparison for any airport
+worldwide. Gemini decides which tools to call and cites their results
+directly rather than following a fixed agent sequence.
+
+```bash
+curl -X POST "http://127.0.0.1:8000/chat" -H "Content-Type: application/json" \
+  -d '{"messages": [{"role": "user", "content": "Should we launch Sydney to Da Nang?"}]}'
+```
+
+### Report library
+
+Completed analyses (a `/copilot` run or an open-route feasibility study) can
+be saved for later browsing via `POST /reports`, listed via `GET /reports`,
+and retrieved in full via `GET /reports/{id}` - backed by a flat JSON file
+(`data/reports.json`, `agents/report_store.py`), no database required.
+
 ## Frontend dashboard (Phase 11)
 
 A Next.js (App Router, TypeScript, Tailwind, Recharts, React-Leaflet) dashboard
-in `frontend/` provides nine views:
+in `frontend/` provides six views:
 
-- **Executive Dashboard** (`/`) - current-month profit, load factor, and
-  market share for each active route, plus a profit-by-route chart.
-- **Route Explorer** (`/routes`) - a Leaflet/OpenStreetMap map of SYD and its
-  routes (including the SYD-DAD candidate route), with a details panel
-  showing distance, frequency, fleet, and market stats for the selected route.
-- **Market Intelligence** (`/market`) - route opportunity ranking, competitor
-  positioning, GDP/tourism correlation, and market share leaderboard.
-- **Demand Forecasting** (`/demand`) - 12-month passenger and load-factor
-  series, YoY growth, demand-driver breakdown, and competitor intelligence.
-- **Revenue Intelligence** (`/revenue`) - cabin revenue composition, pricing
-  simulator, revenue leaderboard, and sparkline trend charts.
-- **AI Agents** (`/copilot`) - conversational AI executive team with nine
-  function-calling tools (simulation, forecasting, future analysis, macro
-  projection, network ranking).
-- **Future Analysis** (`/future`) - multi-year GDP, population, tourism, and
-  fuel price projections; annual P&L trajectory with macro-adjusted demand;
-  market size multiplier chart; monthly profile for the end year; network
-  portfolio ranking by cumulative projected profit. Route and year-range
-  selectable interactively.
-- **Risk Intelligence** (`/risk`) - network risk score, stress-test simulator,
-  route-level fuel/competitive/economic/capacity risk coefficients.
-- **Reports** (`/reports`) - full five-agent pipeline output with strategy
-  recommendation, demand/finance agent numbers, and market/risk commentary.
+- **Dashboard** (`/`) - network-wide KPIs (revenue, profit, market share,
+  passengers, load factor, margin) with month-over-month deltas, a
+  Leaflet/OpenStreetMap route map, and generated strategic insight cards
+  (growth leader, capacity watch, competitive alerts) driven off live
+  simulation output.
+- **Route Explorer** (`/routes`) - a sortable route profitability table, a
+  details panel (cabin revenue breakdown, 12-month demand trend, market
+  context) for the selected route, CSV export, and an **Analyze New Route**
+  panel that runs the open-route gravity model on any worldwide destination
+  from inside the same page.
+- **Market & Demand** (`/market`) - market share leaderboard, a live
+  competitor signals feed flagging contested routes, a demand-driver
+  breakdown for the busiest market, and a 12-month network demand forecast
+  with model-confidence readout.
+- **Scenario Lab** (`/scenario-lab`) - three what-if modes: **What-if
+  Analysis** (manual or preset deltas via `/what_if`), **Stress Test**
+  (canned macro shocks - oil price surge, regional conflict, pandemic,
+  recession - run through `/monte_carlo`), and **Long-range Projection**
+  (multi-year P&L via `/future_analysis`).
+- **AI Copilot** (`/copilot`) - a conversational chat UI over `/chat`'s
+  12-tool agent, plus an on-demand five-agent pipeline run
+  (Demand/Finance/Market/Risk/Strategy) with a full report generation flow
+  that saves into the Report Library.
+- **Reports Library** (`/reports`, `/reports/[id]`) - browsable grid/list of
+  saved analyses with agent/date/route-type filters, and a full-detail
+  preview page per report.
 
 Run the backend and frontend in separate terminals:
 
@@ -283,9 +382,11 @@ described above, then `docker compose up --build api` to bake the updated
 data/
   aircraft_specs.json       Real fleet specs (A320-200, A321neo, B787-9)
   airline_profile.json      Generated: Pacific Wings routes + fleet + market data
+  reports.json              Saved Report Library entries (flat-file store)
   reference/
     airports.csv            Real airport coordinates/distances
     macro_indicators.csv    Real GDP/population/tourism per country/year
+    fuel_prices.csv          Real EIA annual jet fuel spot prices
   processed/
     demand_observations.csv Monthly demand (Phase 3 training target) - real BITRE-derived
                              for SIN/HND/AKL/DAD, synthetic formula for domestic SYD-MEL
@@ -295,29 +396,38 @@ data/
 models/
   demand_model.json          Trained XGBoost demand model
   feature_columns.json        Feature column order
-  metrics.json                Holdout evaluation metrics
+  metrics.json                Holdout evaluation metrics, cross-validation, residual quantiles
+  bootstrap/model_*.json      Bootstrap ensemble (confidence scoring)
 ml/
   features.py                 Shared feature engineering (train + API)
   train_demand_model.py       Phase 3 model training
+  confidence.py                Three-signal forecast confidence scoring
 simulation/
   revenue.py                   Phase 4 revenue model
   cost.py                       Phase 5 cost model
   market_share.py              Phase 6 market share model
   engine.py                     Phase 7 simulation engine
+  monte_carlo.py                Distributional what-if simulator
+  presets.py                    Named what-if scenarios
   macro_projections.py         GDP/population/tourism/fuel projection models
   future_analysis.py           Multi-year route P&L and network portfolio analysis
 agents/
-  llm_client.py                Claude client wrapper (graceful degradation, no API key)
+  llm_client.py                Gemini client wrapper (graceful degradation, no API key)
   context.py                   Real macro/tourism + competitor context for Market/Risk agents
   demand_agent.py              Demand agent (pure extraction, no LLM)
   finance_agent.py             Finance agent (pure extraction, no LLM)
-  market_agent.py              Market agent (Claude narration)
-  risk_agent.py                Risk agent (Claude narration)
-  strategy_agent.py            Strategy agent / executive summary (Claude narration)
+  market_agent.py              Market agent (Gemini narration)
+  risk_agent.py                Risk agent (Gemini narration)
+  strategy_agent.py            Strategy agent / executive summary (Gemini narration)
   graph.py                     Phase 8 LangGraph StateGraph wiring all five agents
   copilot.py                   Phase 9 copilot orchestration
+  chat_agent.py                 Conversational 12-tool function-calling copilot
+  world_airports.py             Global airport database + per-country macro table
+  open_route_analyst.py         Gravity model for any worldwide destination
+  open_route_agents.py          5-agent narrative layer for open-route analysis
+  report_store.py               Report Library persistence (flat JSON file)
 api/
-  main.py                      FastAPI app (/demand_forecast, /route_economics, /what_if, /copilot)
+  main.py                      FastAPI app (see endpoint list above)
 db/
   schema.sql                 PostgreSQL schema
 etl/
@@ -325,22 +435,22 @@ etl/
   fetch_worldbank.py
   build_airline_profile.py
 docs/
+  calculations_and_models.md   Consolidated forecasting/calculation methodology (start here)
   cost_assumptions.md          Phases 4-6 cost/revenue/market-share methodology
   agent_architecture.md        Phases 8-9 agent/copilot methodology
+  data_methodology.md          Real vs. real-derived vs. illustrative, field by field
 Dockerfile                   Phase 12: backend image (FastAPI + pre-trained model)
 docker-compose.yml            Phase 12: db + api + frontend services
 frontend/
   Dockerfile                  Phase 12: frontend image (Next.js standalone build)
   app/
-    page.tsx                    Executive Dashboard ("/")
-    routes/page.tsx             Route Explorer
-    market/page.tsx             Market Intelligence
-    demand/page.tsx             Demand Forecasting
-    revenue/page.tsx            Revenue Intelligence
-    future/page.tsx             Future Analysis & Macro Projections
-    copilot/page.tsx            AI Agents (conversational + tool-calling)
-    risk/page.tsx               Risk Intelligence
-    reports/page.tsx            Executive Reports
+    page.tsx                    Dashboard ("/")
+    routes/page.tsx             Route Explorer (+ open-route analysis)
+    market/page.tsx             Market & Demand
+    scenario-lab/page.tsx       Scenario Lab (what-if / stress test / long-range)
+    copilot/page.tsx            AI Copilot (chat + 5-agent report pipeline)
+    reports/page.tsx            Reports Library
+    reports/[id]/page.tsx       Saved report detail view
   components/                   Shared UI (nav, charts, map, scenario form, ...)
   lib/                          API client, types, constants
 ```

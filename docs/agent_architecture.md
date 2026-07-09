@@ -91,20 +91,33 @@ Gemini is given Python functions as tools and decides for itself which to
 call, with what arguments, and how many times, before writing one unified
 reply.
 
-Tools exposed to the model:
+Tools exposed to the model (`agents/chat_agent.py:CHAT_TOOLS`, 12 total):
 
 | Tool | Wraps | Purpose |
 |---|---|---|
 | `list_routes` | `ml/features.py` `ReferenceData.routes_by_destination` | Resolve city/country names to IATA codes; check active vs. candidate routes |
 | `list_what_if_presets` | `simulation/presets.py` | Discover named scenario presets |
 | `simulate_route` | `SimulationEngine.compare()` | Baseline-vs-scenario demand/revenue/cost/profit/market-share for a route, given fare/frequency/fuel/aircraft/rating changes or a preset. Also accepts `fuel_price_delta_pct` (e.g. "fuel prices rise 25%"), converted internally via `simulation/cost.py:latest_fuel_price()` |
+| `run_route_monte_carlo` | `simulation/monte_carlo.py` | Distributional outcome (percentiles, probability of loss) instead of one point estimate - used for risk/uncertainty/"how likely" questions |
 | `get_market_context` | `agents/context.py` | Real macro/tourism/competitor data for qualitative commentary |
+| `forecast_demand_trend` | `SimulationEngine.compare()`, run monthly across years | Multi-year passenger/revenue/profit trend for an existing route, with YoY growth |
+| `rank_future_opportunities` | `SimulationEngine.compare()` across all routes | Ranks the existing network by projected profit for a future year/month |
+| `project_macro_indicators` | `simulation/macro_projections.py` (via `future_analysis.project_route_fundamentals`) | GDP/population/tourism/fuel/demand-multiplier projection for a destination's market |
+| `analyze_long_term_market` | `simulation/future_analysis.multi_year_route_projection` | Full multi-year P&L trajectory for an existing route under macro-projected conditions |
+| `rank_network_long_term` | `simulation/future_analysis.network_future_analysis` | Multi-year network-wide portfolio ranking by cumulative projected profit |
+| `analyze_new_route` | `agents/open_route_agents.analyze_with_agents` | Full feasibility analysis (gravity model + 5-agent narrative) for ANY worldwide destination, not just existing routes |
+| `compare_new_routes` | `agents/open_route_analyst.compare_route_alternatives` | Side-by-side ranking of 2-8 candidate new destinations worldwide |
 
 The system prompt enforces the same "numbers vs. narration" rule as the rest
 of this document: any quantitative claim must come from a tool call, and the
-model cites those figures exactly. `agents/chat_agent.py:chat()` returns the
-reply text plus a `tool_calls` trace (`{"name", "args", "result"}`) so the UI
-can render simulation deltas alongside the conversational answer. Like the
-other LLM agents, it degrades to `UNAVAILABLE_NOTICE` if `GEMINI_API_KEY` is
-not set or the API call fails - this is independent of, and does not modify,
-the `/copilot` 5-agent pipeline.
+model cites those figures exactly. For `analyze_new_route` specifically, the
+prompt instructs the model to structure its reply as a five-section report
+(`## Demand Agent` / `## Finance Agent` / `## Market Agent` / `## Risk Agent`
+/ `## Strategy Agent`), mirroring the `/copilot` pipeline's five perspectives
+even though this is a single conversational call. `agents/chat_agent.py:chat()`
+returns the reply text plus a tool-call trace
+(`response.automatic_function_calling_history`) so the UI can render
+simulation deltas alongside the conversational answer. Like the other LLM
+agents, it degrades to `UNAVAILABLE_NOTICE` if `GEMINI_API_KEY` is not set or
+the API call fails - this is independent of, and does not modify, the
+`/copilot` 5-agent pipeline.
