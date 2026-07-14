@@ -1,0 +1,9 @@
+pandas
+xgboost
+scikit-learn
+fastapi
+uvicorn[standard]
+langgraph
+langchain-core
+google-genai
+python-dotenv
