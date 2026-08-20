@@ -92,6 +92,7 @@ function InitiateAnalysisCard() {
 }
 
 export default function ReportsLibraryPage() {
+  const [loadedAt, setLoadedAt] = useState(() => Date.now());
   const [reports, setReports] = useState<ReportSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -101,22 +102,50 @@ export default function ReportsLibraryPage() {
   const [kindFilter, setKindFilter] = useState("");
   const [dateRange, setDateRange] = useState("all");
 
-  function load() {
+  // `load` is the Refresh button's handler. The mount fetch is a separate
+  // effect below rather than `useEffect(load, [])`, because load() sets state
+  // synchronously and doing that in an effect body cascades a render.
+  async function load() {
     setLoading(true);
     setError(null);
-    getReports()
-      .then((res) => setReports(res.reports))
-      .catch((err) => setError(err instanceof Error ? err.message : String(err)))
-      .finally(() => setLoading(false));
+    try {
+      const res = await getReports();
+      setReports(res.reports);
+      // "Now" is stamped when the list arrives rather than read during
+      // render: Date.now() in a render body makes the component impure, so
+      // React may filter against a different instant on each pass.
+      setLoadedAt(Date.now());
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setLoading(false);
+    }
   }
 
-  useEffect(load, []);
+  useEffect(() => {
+    let cancelled = false;
+    getReports()
+      .then((res) => {
+        if (cancelled) return;
+        setReports(res.reports);
+        setLoadedAt(Date.now());
+      })
+      .catch((err) => {
+        if (!cancelled) setError(err instanceof Error ? err.message : String(err));
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const filtered = reports.filter((r) => {
     if (agentFilter && !r.agents.includes(agentFilter)) return false;
     if (kindFilter && r.kind !== kindFilter) return false;
     if (dateRange !== "all") {
-      const cutoff = Date.now() - Number(dateRange) * 86400000;
+      const cutoff = loadedAt - Number(dateRange) * 86400000;
       if (new Date(r.created_at).getTime() < cutoff) return false;
     }
     return true;
@@ -188,7 +217,7 @@ export default function ReportsLibraryPage() {
         </div>
         <button
           type="button"
-          onClick={load}
+          onClick={() => void load()}
           className="flex items-center gap-2 rounded border border-white/5 bg-surface-variant px-6 py-2.5 font-label text-sm text-on-surface transition-colors hover:bg-surface-container-highest"
         >
           <span className="material-symbols-outlined text-[20px]">filter_list</span>

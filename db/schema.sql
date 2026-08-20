@@ -1,4 +1,11 @@
--- Airline Strategy Simulator - core schema (Phase 2)
+-- Pacific Wings - reference schema for the ETL target database.
+--
+-- The running API does not connect to Postgres: it reads the fitted market
+-- model and reference files directly. This schema is the shape etl/load_db.py
+-- writes into, and the shape pacific_wings/ml/train.py reads from when a
+-- database is available (it falls back to the CSV when one is not).
+--
+-- Start it with: docker compose --profile etl up -d db
 -- Real reference data: airports, aircraft, macro_indicators, fuel_prices
 -- Simulation/derived data: routes, competitors, demand_observations
 
@@ -63,13 +70,15 @@ CREATE TABLE competitors (
     PRIMARY KEY (route_id, competitor_name)
 );
 
--- Synthetic-but-calibrated: monthly demand used as ML training target
+-- Real (BITRE city-pair) where available: monthly TOTAL route market,
+-- one-way-equivalent, all carriers. This is the ML training target. It is
+-- deliberately the whole market and not Pacific Wings' slice - the slice is
+-- derived at simulation time as market x modeled share, capped by capacity.
 CREATE TABLE demand_observations (
-    route_id        INTEGER NOT NULL REFERENCES routes(route_id),
-    year            INTEGER NOT NULL,
-    month           INTEGER NOT NULL CHECK (month BETWEEN 1 AND 12),
-    passengers      INTEGER NOT NULL,
-    avg_fare_usd    NUMERIC(8, 2),
-    load_factor     NUMERIC(5, 4),
+    route_id           INTEGER NOT NULL REFERENCES routes(route_id),
+    year               INTEGER NOT NULL,
+    month              INTEGER NOT NULL CHECK (month BETWEEN 1 AND 12),
+    market_passengers  INTEGER NOT NULL,
+    avg_fare_usd       NUMERIC(8, 2),
     PRIMARY KEY (route_id, year, month)
 );

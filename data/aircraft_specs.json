@@ -12,7 +12,9 @@
       "range_km": 6150,
       "cruise_fuel_burn_kg_per_hour": 2400,
       "cruise_speed_kmh": 828,
-      "casm_usd": 0.0615
+      "casm_usd": 0.0615,
+      "count": 3,
+      "max_daily_block_hours": 11.0
     },
     {
       "type": "A321neo",
@@ -25,7 +27,9 @@
       "range_km": 7400,
       "cruise_fuel_burn_kg_per_hour": 2800,
       "cruise_speed_kmh": 828,
-      "casm_usd": 0.0533
+      "casm_usd": 0.0533,
+      "count": 3,
+      "max_daily_block_hours": 12.0
     },
     {
       "type": "B787-9",
@@ -39,7 +43,9 @@
       "range_km": 14140,
       "cruise_fuel_burn_kg_per_hour": 5400,
       "cruise_speed_kmh": 903,
-      "casm_usd": 0.0464
+      "casm_usd": 0.0464,
+      "count": 2,
+      "max_daily_block_hours": 13.0
     }
   ]
 }

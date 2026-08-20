@@ -31,49 +31,107 @@ instead of repeated.
 The stack is built in layers, each one a prerequisite for the next:
 
 ```
-real geography + macro data
+real geography + BITRE traffic + World Bank macro
         │
         ▼
-demand forecasting model (XGBoost)  ──┐
-        │                             │
-        ▼                             │
-revenue model  +  cost model          │  Phases 3-6
-        │              │              │
-        ▼              ▼              │
-     market share model  ─────────────┘
+market-size model  ──────────────┐   total route market, all carriers
+        │                        │
+        ├── x macro growth       │   IMF WEO + IATA income elasticity
+        ├── x fare elasticity    │   explicit constant, ε = −0.8
+        │                        │
+        ▼                        │
+market share model  ◄────────────┘   QSI multinomial logit over real carriers
         │
         ▼
-simulation engine (ties 3-6 together, capacity-constrained)
+Pacific Wings demand
+        │
+        ▼  capped at capacity × 0.88; remainder reported as spilled
+passengers carried
+        │
+        ├──► revenue model  +  cost model  ──►  profit
+        └──► fleet feasibility (block hours vs. real tail counts)
         │
         ├──► Monte Carlo (distributional what-if)
         ├──► macro projections + future analysis (multi-year, network ranking)
         ├──► what-if presets (named scenarios)
-        └──► open-route exploration (gravity model for any world airport)
+        └──► open-route screening (gravity model for any world airport)
         │
         ▼
-AI agent layer (LangGraph 5-agent pipeline + conversational copilot)
+AI agent layer (LangGraph report pipeline + conversational copilot)
 ```
+
+**The direction of the arrows is the point.** The model forecasts the whole
+market; Pacific Wings' share of it is derived. That is what lets frequency,
+price, service rating and competitor entry each move the answer. An earlier
+version predicted Pacific Wings' own passengers directly and capped the result
+at its own capacity, which made every strategy lever inert — see §1.
+
 
 ---
 
-## 1. Demand forecasting model (`ml/train_demand_model.py`, `ml/features.py`)
+## 1. Market-size model (`pacific_wings/ml/market_model.py`, `pacific_wings/ml/train.py`)
 
-### 1.1 What predicts demand
+### 1.1 What is forecast, and why it is not what you would guess
 
-An XGBoost gradient-boosted regressor (`n_estimators=150, max_depth=3,
-learning_rate=0.1`) predicts **monthly passengers** for a route from 10
-features (`ml/features.py:FEATURE_COLUMNS`):
+The model forecasts the **total monthly market for a route** — every carrier's
+passengers, one-way-equivalent — and not Pacific Wings' own traffic.
 
-| Feature | Source |
+That choice is the foundation of everything else. The target is a real
+observable (BITRE city-pair statistics), and Pacific Wings' slice is derived
+downstream as `market × share`, so the share model, the fare elasticity and the
+capacity cap each get to move the answer.
+
+The previous design did the intuitive thing and predicted Pacific Wings'
+passengers directly. Its training labels had been built by multiplying the real
+market by an *assumed* market share and then capping the result at Pacific
+Wings' own seat capacity — so the label was a function of the airline's own
+fleet decisions. The model learned the capacity ceiling instead of a demand
+curve, and the symptoms were severe:
+
+| Symptom | Measured |
 |---|---|
-| `distance_km` | Real haversine distance |
-| `gdp_usd`, `gdp_growth_pct`, `population` | Real, World Bank, per year |
-| `tourism_arrivals_baseline` | Real, frozen 2019 snapshot |
-| `competitor_count`, `competitor_avg_fare_usd` | Real-derived competitor set |
-| `avg_fare_usd` | Pacific Wings' own fare (the lever a what-if controls) |
-| `month_sin`, `month_cos` | Cyclical month encoding — a plain integer month would tell the tree "December (12) is far from January (1)" when they're adjacent; the sin/cos pair maps the 12-month cycle onto a circle so December and January sit next to each other in feature space |
+| Fare's effect on demand | elasticity −0.004 (industry: −0.8 to −1.5) |
+| Feature importance of `avg_fare_usd` | 0.001 |
+| Feature importance of `competitor_count` | 0.000 |
+| Adding 14 weekly flights on SYD–SIN | market share 9.4% → 13.5%, passengers **unchanged** |
+| Reported holdout R² | 0.965 — while losing to a `groupby().mean()` |
 
-### 1.2 Training protocol: why 2022 is excluded, why two evaluations exist
+### 1.2 Two candidates, scored every run
+
+`pacific_wings/ml/train.py` fits two models and picks between them on one
+forward-looking holdout (train 2023, predict 2024), then records the scoreboard
+in `models/market_model.json` and regenerates
+[`model_metrics.md`](model_metrics.md):
+
+- **`seasonal_index`** — each route's mean market level times a per-month index
+  built from that route's own history. A level and a shape.
+- **`xgboost`** — gradient-boosted trees over distance, macro, competitor and
+  fare features (`pacific_wings/ml/features.py`).
+
+**The trees lost**, and leave-one-route-out cross-validation shows the gap is
+structural rather than a tuning miss: with five routes, the only features that
+separate them are constants (distance, population), so the trees learn a route
+lookup and cannot transfer to an unseen route (held-out MAPE 34%–6300%). A
+per-route index does that same lookup honestly, in a tenth of the code, and
+extrapolates cleanly instead of saturating.
+
+XGBoost stays in the repo as a live contender. If more routes or more history
+arrive it may start winning, and the run that flips the selection will say so.
+
+**Two naive baselines are scored alongside them every run** — each route's
+prior-year mean, and same-month-last-year — and a model must beat the best of
+them by more than 2% relative MAPE before the run will call it a win. That
+check exists because the previous pipeline reported R² = 0.965 while losing to
+a groupby mean, and nothing in the metrics would have revealed it.
+
+Nothing in this layer responds to fare or competition, deliberately. Those are
+explicit, documented mechanisms applied on top by the simulation engine (§5):
+a constant-elasticity fare term against market size, and the multinomial logit
+against the carriers. Burying them inside a model fitted on 120 rows is what
+made every lever inert in the first place.
+
+
+### 1.3 Training protocol: why 2022 is excluded, and what is validated
 
 Training data is **real BITRE-derived** figures for SIN/HND/AKL/DAD and a
 calibrated synthetic formula for the domestic SYD-MEL route (see
@@ -83,34 +141,63 @@ COVID reopening ramp, not steady-state demand (HND averaged a 0.16 load factor
 in 2022 vs. 0.57 in 2024). Training on it dragged deployed HND predictions to
 roughly half of 2024 actuals.
 
-Two different, complementary evaluations are reported (`models/metrics.json`),
-because each answers a different question:
+**Live numbers live in [`model_metrics.md`](model_metrics.md)**, which the
+training run regenerates. Do not copy figures out of it into prose here — that
+is exactly how this section came to advertise R² = 0.952 / MAPE = 15.3% long
+after the artifact said otherwise.
 
-- **Time-based holdout** (train 2023, test 2024) — "can the model forecast a
-  year it has never seen?" This is the honest test of forecast skill:
-  **R² = 0.952, MAPE = 15.3%** against real-world noise (before the real-data
-  rebuild, this metric was R² = 0.984 against a known synthetic formula — the
-  drop is real and expected, not a regression).
-- **5-fold cross-validation** (shuffled, ignores time order) — "how stable is
-  performance across different random splits of the same data?" R² is stable
-  (0.966 ± 0.014) but MAPE is not (42% ± 26%), because DAD's tiny passenger
-  counts (as low as 15/month) blow up percentage error whenever a fold
-  under-represents that route. Reported honestly rather than hidden.
+Three evaluations are reported (`models/metrics.json`), because each answers a
+different question:
+
+- **Time-based holdout** (train 2023, predict 2024) — "can this forecast a year
+  it has never seen?" This is the headline, and it is also the selection
+  criterion: two candidate models compete on it and the winner is deployed.
+- **Naive baselines**, scored on the same holdout: each route's prior-year mean,
+  and same-month-last-year. This exists because the previous pipeline reported
+  R² = 0.965 while losing to a `groupby().mean()`, and nothing in the metrics
+  would have revealed it. A model must beat the best baseline by more than 2%
+  relative MAPE before the run will call it a win.
+- **Leave-one-route-out cross-validation** (GroupKFold on destination) — "does
+  this transfer to a route it has never seen?" It replaced a shuffled k-fold
+  that leaked: shuffling a monthly panel puts a route's adjacent months in both
+  folds, and since distance and population are constant per route, the model
+  could identify its own test rows. The leaked version scored 0.992 against an
+  honest 0.965 and read as stability.
+
+Leave-one-route-out error is enormous, and that is the finding rather than a
+defect: with five routes, nothing separates them but constants, so no model
+generalises across them. Unseen destinations are served by the gravity model in
+`pacific_wings/analysis/open_route.py`, not by this one.
 
 The **deployed** model is then refit on all rows including the 2024 holdout —
 the holdout exists to grade the protocol, not to be a data point the shipped
 model is blind to.
 
-### 1.3 Prediction intervals: residual bootstrap, not a model-based interval
+### 1.4 Prediction intervals: out-of-fold residuals, not a model-based interval
 
-`/demand_forecast`'s `predicted_passengers_low/high` band is the point
-forecast plus the historical holdout's 10th/90th percentile error, clamped to
-`[0, capacity]`. This is **not** quantile regression or any model-native
-uncertainty — it's the empirically observed error distribution from the one
-real holdout year, applied as a fixed offset. Cheap, transparent, and honest
-about being an approximation.
+The band is the point forecast plus this route's 10th/90th percentile
+**out-of-fold** residual. Out-of-fold matters: the residuals come from
+rolling-origin refits, so every row is scored by a model that never saw it,
+under the deployed configuration.
 
-### 1.4 Confidence score: three independent uncertainty signals (`ml/confidence.py`)
+They previously came from the 2023-only holdout model while a different,
+all-rows model was actually deployed — so the published interval carried a
+discarded model's per-route bias. HND shipped a permanent +830 passenger
+correction belonging to a model that was no longer in production, which
+rendered as an asymmetric band skewed 28% upward on a base near 3,000.
+
+The band is applied to the **market** forecast, which is what was measured.
+Pacific Wings' band is that band times its share, then capped by what it can
+actually fly — the same treatment the point estimate gets, so the interval and
+the point stay consistent. On a spilling route the two collapse together, which
+is correct: if you are turning demand away, your carried passengers really are
+certain, and it is the spill that is uncertain.
+
+This is **not** quantile regression or any model-native uncertainty. It is the
+empirically observed error distribution, applied as an offset. Cheap,
+transparent, and honest about being an approximation.
+
+### 1.5 Confidence score: three independent uncertainty signals (`pacific_wings/ml/confidence.py`)
 
 Every forecast reports a single `confidence_pct` (5-95 range), built by
 combining three genuinely different, independently-computed signals into one
@@ -118,12 +205,17 @@ number — this is one of the more deliberately-engineered pieces of the
 project, built specifically to replace fabricated "Confidence %" badges that
 existed earlier and had no real basis.
 
-**Signal 1 — Bootstrap ensemble disagreement (epistemic uncertainty).**
-Training also fits `N_BOOTSTRAP=30` extra XGBoost models, each on a
-resample-with-replacement of the same training rows
-(`train_bootstrap_ensemble`). At inference, all 30 models score the same
-input; the **coefficient of variation** of their 30 predictions measures how
-sensitive the answer is to exactly which rows the model happened to train on:
+**Signal 1 — Resampling spread (epistemic uncertainty).**
+Training refits the market model on `N_BOOTSTRAP=200` resamples-with-
+replacement of the observed rows and records, per route and month, the
+**coefficient of variation** of the resulting predictions
+(`models/bootstrap.json`). It measures how much the answer depends on exactly
+which months happened to be observed.
+
+This used to be an ensemble of 30 saved XGBoost models, loaded and scored on
+every single forecast — roughly 125ms a call, or a full minute across a
+500-trial Monte Carlo run, to produce a number that is a few floats. Precomputing
+it took Monte Carlo from 62.6s to under a second:
 
 ```
 coefficient_of_variation = std(bootstrap_predictions) / point_prediction
@@ -168,7 +260,7 @@ the specific reason for any deduction in plain language, e.g. *"Forecast year
 
 ---
 
-## 2. Revenue model (`simulation/revenue.py`)
+## 2. Revenue model (`pacific_wings/simulation/revenue.py`)
 
 The forecast's `avg_fare_usd` is on an **economy-fare scale**. Cabin
 revenue scales *up* from it using the aircraft's real seat mix, calibrated
@@ -198,7 +290,7 @@ but are not fitted to Pacific-Wings-specific data — see `cost_assumptions.md`.
 
 ---
 
-## 3. Cost model (`simulation/cost.py`)
+## 3. Cost model (`pacific_wings/simulation/cost.py`)
 
 ### 3.1 A real anchor, split so fuel becomes a lever
 
@@ -250,17 +342,33 @@ than the same change on long ones.
 
 ---
 
-## 4. Market share model (`simulation/market_share.py`)
+## 4. Market share model (`pacific_wings/simulation/market_share.py`)
 
-A multinomial logit ("attraction"/QSI-style) model over Pacific Wings and its
-real competitor set:
+A multinomial logit (QSI, "Quality of Service Index") over Pacific Wings and
+its real competitor set. **This model allocates passengers** — the engine
+multiplies market size by the share it returns. It is not a display value.
 
 ```
-utility_i = BETA_LN_PRICE * ln(price_i) + BETA_FREQUENCY * log1p(weekly_frequency_i) + BETA_RATING * rating_i
+utility_i = BETA_LN_FREQUENCY * ln(frequency_i)
+          - BETA_LN_PRICE     * ln(price_i)
+          + BETA_RATING       * rating_i
 share_i   = exp(utility_i) / Σ_j exp(utility_j)
 
-BETA_LN_PRICE = -0.7,  BETA_FREQUENCY = 0.4,  BETA_RATING = 1.8
+BETA_LN_FREQUENCY = 1.0,  BETA_LN_PRICE = 0.5,  BETA_RATING = 0.8
 ```
+
+`BETA_LN_FREQUENCY = 1.0` is the meaningful choice: it makes share
+proportional to **frequency share** when price and rating are equal, which is
+the core empirical regularity QSI models are built around. (S-curve effects
+mean the true exponent is often slightly above 1 on competitive routes; 1.0 is
+the conservative version of that claim.)
+
+The previous calibration used `log1p(frequency)` with `BETA_FREQUENCY = 0.4`
+and `BETA_RATING = 1.8`, and rating dominated everything: Pacific Wings held
+13.3% of SYD–MEL on 14 weekly flights against 574 from Qantas, Virgin and
+Jetstar, and a carrier with **zero** flights still scored 4.3% share, because
+`log1p(0)` zeroes only the frequency term while the rating term keeps it in the
+choice set. Carriers not operating are now excluded outright.
 
 **Why log terms, specifically:** fares in this dataset span $25-720 and
 weekly frequencies span 3-259 (two orders of magnitude — SYD-DAD has zero
@@ -272,31 +380,69 @@ give a constant *percentage*-difference response everywhere — the standard
 log-log form used in real airline QSI modeling.
 
 **Calibration, not fitting:** no public route-level market-share dataset
-exists to fit against, so the three betas are chosen so each factor has a
-visible-but-not-dominant effect, then **cross-checked** against the one real
-benchmark available — BITRE country-level AU-Singapore traffic share. This
-calibration puts Singapore Airlines at ~61-62% modeled share on SYD-SIN vs.
-its real ~60% reported share: one data point, used as a plausibility check,
-not a calibration target. A `__main__` self-check in `market_share.py`
-re-asserts this on every run so a recalibration can't silently drift away
-from it.
+exists to fit against, so the betas are chosen against the one real benchmark
+available — BITRE country-level AU–Singapore traffic share, which puts
+Singapore Airlines near 60% of the SYD–SIN market — plus the requirement that
+every route produce a plausible split:
+
+| Route | Modeled split |
+|---|---|
+| SYD–SIN | Singapore Airlines 53%, Scoot 23%, Qantas 16%, **Pacific Wings 8%** |
+| SYD–HND | All Nippon 46%, Japan Airlines 23%, Qantas 21%, **Pacific Wings 10%** |
+| SYD–MEL | Qantas 40%, Virgin 38%, Jetstar 20%, **Pacific Wings 2%** |
+| SYD–AKL | Qantas 48%, Air New Zealand 36%, Jetstar 7%, **Pacific Wings 9%** |
+| SYD–DAD | Connecting itineraries 74%, **Pacific Wings 26%** |
+
+A `__main__` self-check in `market_share.py` re-asserts the Singapore
+benchmark, the small-carrier-on-a-trunk-route result, frequency monotonicity
+and the price response on every run, so a recalibration cannot silently drift.
+
+**Unserved routes are contested, not free.** SYD–DAD has no nonstop
+competitor, and the old model therefore handed Pacific Wings 100% of it — the
+most optimistic possible assumption applied exactly where the evidence is
+weakest. That traffic exists today and flies via Singapore, Hong Kong and
+Bangkok, so a route with no direct carrier now competes against a synthetic
+**connecting itinerary**: cheaper (15% below nonstop), plentiful (28 weekly
+hub options), and a materially worse product (rating 2.5 against Pacific
+Wings' 4.1, standing in for the layover and the missed-connection risk). A
+nonstop entrant takes a large minority of such a market rather than all or
+none of it.
 
 ---
 
-## 5. Simulation engine (`simulation/engine.py`) — the deterministic core
+## 5. Simulation engine (`pacific_wings/simulation/engine.py`) — the deterministic core
 
 `SimulationEngine.run_scenario(...)` is a pure function that ties sections
-1-4 together for one route/month:
+1–4 together for one route/month:
 
 1. Apply scenario deltas (fare, frequency, fuel price, aircraft, rating).
-2. Forecast **demand** from market features + the scenario fare — Pacific
-   Wings' own capacity choice does not change market demand.
-3. Compute **capacity** from the scenario frequency/aircraft, and cap:
-   `passengers_carried = min(predicted_demand, capacity)` — capacity only
-   binds when frequency is cut or an aircraft swap shrinks capacity below
-   what demand alone would fill.
-4. Compute **revenue**, **cost**, **profit** from `passengers_carried`.
-5. Compute **market share** from the scenario fare/frequency/rating.
+2. Forecast the **total market** (§1), then apply the explicit multipliers:
+   macro growth (§7), fare elasticity, tourism, and any GDP shock. Each is a
+   named constant with a citation, not a coefficient inside a fitted model.
+3. Compute **market share** (§4) from the scenario fare, frequency and rating,
+   and take Pacific Wings' slice: `own_demand = market × share`.
+4. Compute **capacity**, and cap what can be sold:
+   `carried = min(own_demand, capacity × MAX_SELLABLE_LOAD_FACTOR)`.
+   The remainder is reported as **spilled** — demand turned away.
+5. Compute **revenue**, **cost**, **profit** from `carried`.
+6. Check the schedule against the **fleet** (§8): block hours required versus
+   tail counts available.
+
+**The 0.88 sellable ceiling is not decoration.** Real full-service carriers
+sustain 82–88%: the last seats on peak departures cannot be filled by off-peak
+demand that is still unserved, and demand does not arrive evenly across a
+month. Measured seat utilisation in the BITRE data for these corridors is
+Singapore 0.888, New Zealand 0.832, Japan 0.799, Vietnam 0.736. Without it,
+months where demand met capacity reported a 100% load factor and Monte Carlo
+runs piled up against exactly 1.000.
+
+**Own-price elasticity comes out near −1.3** — the market term (−0.8) plus the
+share response — inside the −0.8 to −1.5 range the literature reports. The
+practical consequence is that profit has an interior maximum in both price and
+frequency, which is what makes the tool answerable at all. It previously had
+neither: demand was fare-inelastic (−0.004), so profit rose without limit as
+price rose, and share was computed on a line nothing consumed, so adding
+capacity only ever added cost.
 
 `SimulationEngine.compare(...)` runs a no-deltas baseline alongside the
 scenario and returns the deltas — this is what powers `/what_if`,
@@ -328,7 +474,50 @@ growth.
 
 ---
 
-## 6. Monte Carlo scenario simulator (`simulation/monte_carlo.py`)
+### 5.2 Fleet feasibility (`pacific_wings/simulation/fleet.py`)
+
+Pricing a schedule is not the same as being able to fly it. The constraint is
+**block hours**, not departures: a tail can fly only so many hours a day, and a
+long sector consumes more of them per departure.
+
+```
+hours_required(type)  = Σ over routes of
+                        weekly_frequency × 2 × (distance / cruise_speed + 0.5h)
+hours_available(type) = tails × max_daily_block_hours × 7
+```
+
+The round trip is what matters — the aeroplane has to come back — even though
+revenue and cost are both accounted one-directionally throughout (§3).
+
+Current utilisation, and therefore how much room there is to grow before buying
+an aircraft:
+
+| Type | Tails | Required | Available | Utilisation |
+|---|---|---|---|---|
+| A321neo | 3 | 113.4 h/wk | 252.0 h/wk | 45% |
+| B787-9 | 2 | 91.6 h/wk | 182.0 h/wk | 50% |
+| A320-200 | 3 | 81.4 h/wk | 231.0 h/wk | 35% |
+
+**This reports rather than refuses.** "You need 4 A321neos and you have 3" is
+the useful answer to a growth scenario; declining to price it is not. On SYD–SIN
+the profit-maximising frequency is +14/week — and it needs a fourth aircraft,
+which is exactly the tradeoff a network planner is there to decide.
+
+There are two checks, and the difference matters. `check()` varies one route
+against today's network, which is the right question for a single what-if.
+`check_schedule()` takes a whole schedule, which is the right question for a
+plan: MEL at 56×/week and AKL at 28×/week each fit the A320-200 fleet alone,
+and do not fit together, because each single-route check assumes the other
+route stayed where it was.
+
+Until this existed there was no fleet at all — `airline_profile.json` listed
+three aircraft *types* with no tail counts, no utilisation and no assignment —
+so `frequency_delta=+50` on SYD–SIN priced roughly eleven A321neos of flying as
+though the aircraft were free and already parked at the gate.
+
+---
+
+## 6. Monte Carlo scenario simulator (`pacific_wings/simulation/monte_carlo.py`)
 
 The deterministic engine answers "what happens under these specific
 assumptions." Monte Carlo answers "what's the plausible **range** of
@@ -355,7 +544,7 @@ where the scenario loses money.
 
 ---
 
-## 7. Macro projection models (`simulation/macro_projections.py`) — forecasting the market itself
+## 7. Macro projection models (`pacific_wings/simulation/macro_projections.py`) — forecasting the market itself
 
 Four independent models project GDP, population, tourism, and fuel price
 forward from real historical data, each using a different technique matched
@@ -441,7 +630,7 @@ project connect.
 
 ---
 
-## 8. Future analysis: multi-year P&L and network portfolio ranking (`simulation/future_analysis.py`)
+## 8. Future analysis: multi-year P&L and network portfolio ranking (`pacific_wings/simulation/future_analysis.py`)
 
 Three escalating levels of analysis, all built on Sections 5-7:
 
@@ -465,7 +654,7 @@ year's numbers with a `* 1.05` bolted on.
 
 ---
 
-## 9. What-if presets (`simulation/presets.py`)
+## 9. What-if presets (`pacific_wings/simulation/presets.py`)
 
 Three named scenarios as thin, self-documenting wrappers over
 `run_scenario`/`compare` kwargs, each derived from the route's own reference
@@ -480,14 +669,33 @@ applied to (not a single hardcoded number reused everywhere):
 
 ---
 
-## 10. Open-route exploration: a gravity model for any airport on Earth (`agents/open_route_analyst.py`)
+## 10. Open-route exploration: a gravity model for any airport on Earth (`pacific_wings/analysis/open_route.py`)
 
-Sections 1-9 all operate on Pacific Wings' five known routes, where a trained
-demand model and real competitor data exist. This module answers a
-structurally different question — **"should Pacific Wings fly somewhere it
-has never flown, to a city with no route-level data at all?"** — using a
-first-principles gravity model instead of a trained regressor, because no
-training data exists for an arbitrary new city pair.
+Sections 1-9 all operate on Pacific Wings' five known routes, where observed
+market data and a real competitor set exist. This module answers a structurally
+different question — **"should Pacific Wings fly somewhere it has never flown,
+to a city with no route-level data at all?"**
+
+**It supplies a market size, and nothing else.** Everything downstream — the
+share logit, the fare elasticity, the spill cap, revenue, cost, profit — is
+`SimulationEngine.run_open_route`, the same code path `/what_if` runs. And
+where the project already *has* observed data for a route, this module defers
+to it: real market size, real competitors, the observed fare.
+
+That deference is the whole point. This module used to carry its own copies of
+all of it — its own market model, its own `_new_entrant_share` heuristic, its
+own hardcoded 82% load-factor target, its own fuel and revenue arithmetic — and
+the two engines returned **opposite verdicts on the same route**. SYD–DAD
+screened as +$4.9M/yr `PROCEED` here while the simulator called it −$9.9M/yr, a
+$14.8M disagreement, and both were shown in the same UI.
+
+The symptoms of that split were visible in aggregate too. Screening 39 real
+destinations, **36 returned a load factor of exactly 0.82** — the hardcoded
+ceiling — so the gravity model was discarded 92% of the time and profit reduced
+to a fixed function of distance. 92% of destinations came back profitable and
+72% got `PROCEED`. A screener that says yes to almost everything is not
+screening. Today load factor is an outcome of demand, thin markets screen
+themselves out, and the two engines agree on every route they share.
 
 ### 10.1 Bilateral market size: a calibrated gravity model
 
@@ -502,12 +710,19 @@ dist_ratio = (REF_DIST_KM / distance_km)^1.30
 tour_ratio = sqrt(tourism_factor(dest) / tourism_factor(REF_TOURISM))
 ```
 
-Calibrated against the **real** SYD-SIN bilateral market (3.5M passengers/yr,
-BITRE), using log-damped GDP (prevents wildly over-predicting for
+Calibrated against the **real** SYD–SIN city-pair market (840,000
+one-way-equivalent passengers/yr, 2024, from the same BITRE data this project
+already parses), using log-damped GDP (prevents wildly over-predicting for
 enormous economies like the US or China) and a square-root tourism factor. A
 separate flat-density formula handles short-haul/domestic markets (<2,500km),
 since domestic and trans-Tasman city pairs are denser than the distance-decay
 gravity term alone would predict.
+
+The reference figure was previously 3,500,000 — the **Australia**–Singapore
+country-pair total, used to calibrate a **city**-pair model, which inflated
+every estimate by roughly 4×. Sydney is not the only Australian city that flies
+to Singapore. The error stayed invisible because the gravity estimate was
+almost always thrown away by the load-factor cap downstream.
 
 **The destination-size cap is the important addition:** without it, the raw
 gravity formula's distance term alone assigned metro-scale demand to small
@@ -569,16 +784,27 @@ size; `competition` risk scales with the number of existing carriers;
 Three 0-100 sub-scores blend into one composite (weights 0.35/0.40/0.25):
 
 ```
-demand_score    = 20*log10(market_pax/500K + 1) + 30*min(load_factor/0.82, 1)
+demand_score    = 20*log10(market_pax/500K + 1) + 30*min(load_factor/0.88, 1)
 financial_score = 50*min(max(margin+0.1,0)/0.2, 1) + 50*(1 - max(breakeven_lf-0.5,0)/0.4)
 strategic_score = 30*(tourism_factor/1.4) + 20*(1 - min(overall_risk/2,1)) + 20*min(gdp_B/1000,1) + 30*(1 if profitable else 0)
 composite_score = 0.35*demand_score + 0.40*financial_score + 0.25*strategic_score
 ```
 
-...which maps to a verdict: `NOT FEASIBLE` (exceeds aircraft range),
-`PROCEED` (score ≥65 and profitable), `PROCEED WITH CAUTION` (score ≥45 or
-profitable), else `DO NOT PROCEED`. A generated pros/cons list explains
-*why* in plain language, driven off the same underlying numbers.
+...which maps to a verdict: `PROCEED` (score ≥65 and profitable),
+`PROCEED WITH CAUTION` (score ≥45 or profitable), else `DO NOT PROCEED`. A
+generated pros/cons list explains *why* in plain language, driven off the same
+underlying numbers.
+
+**A route outside the fleet's range never reaches the scoring at all.** It
+short-circuits to `NOT FEASIBLE` with the range shortfall and the aircraft that
+would close it, and the response carries no `financials` and no `scoring`
+sections — deliberately, because there is nothing to score and a score invites
+the reader to weigh it against routes that can actually be flown.
+
+SYD–LHR used to come back `NOT FEASIBLE` **and** 67/100 **and** eight pros,
+including "Estimated profitable at launch: $6.8M annual profit" and "Projected
+82% load factor — strong asset utilisation", for a flight no aircraft in the
+fleet can operate. Eight of 39 screened destinations had that shape.
 
 This whole module is explicitly scoped as **order-of-magnitude strategic
 screening** (±30-40% confidence bands are attached throughout), distinct
@@ -603,9 +829,9 @@ recompute them.
   extractions from `SimulationEngine.compare()` output — no LLM call, so
   they're bit-for-bit reproducible. Market, Risk, and Strategy each make a
   separate Gemini call, grounded in the same simulation output plus real
-  macro/tourism/competitor context (`agents/context.py`) — three genuinely
+  macro/tourism/competitor context (`pacific_wings/agents/context.py`) — three genuinely
   independent AI perspectives, not one voice split three ways.
-- **`/chat`** (`agents/chat_agent.py`) is a different interaction model: one
+- **`/chat`** (`pacific_wings/agents/chat_agent.py`) is a different interaction model: one
   Gemini conversation using **automatic function calling** over **12 tools**
   spanning the entire stack above — route lookup, deterministic simulation,
   Monte Carlo, market context, multi-year demand trend, network opportunity
@@ -634,12 +860,13 @@ typical "toy" airline simulator:
    figures — documented per-field in `data_methodology.md` and referenced
    throughout this document instead of asserted once and forgotten.
 2. **Explicitly solving the tree-model extrapolation problem** (Section 5.1)
-   by separating "forecast demand under known conditions" (XGBoost, which is
+   by separating "forecast the market under known conditions" (the market
+   model, which is
    good at this) from "project how the addressable market grows" (explicit
    macro models, Section 7) — rather than either refusing to forecast future
    years or silently producing flat, wrong long-horizon forecasts.
 3. **A three-signal confidence score** (Section 1.4) that combines epistemic
-   uncertainty (bootstrap ensemble disagreement), aleatoric uncertainty
+   uncertainty (resampling spread), aleatoric uncertainty
    (real per-route historical error), and extrapolation distance into one
    number — replacing what was originally a fabricated badge with something
    built entirely from real, inspectable inputs.

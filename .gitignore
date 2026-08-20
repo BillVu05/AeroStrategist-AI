@@ -12,3 +12,16 @@ venv/
 # Large raw government data downloads (re-downloadable; derived CSVs in
 # data/processed and data/reference are committed instead)
 data/raw/
+
+# Written by the running app (the Strategic Report Library). Tracking it meant
+# every ordinary run showed up as an uncommitted diff. data/reports.seed.json
+# is the committed starting point; report_store.py falls back to it.
+data/reports.json
+
+# Tool caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Local dev server logs
+*.log

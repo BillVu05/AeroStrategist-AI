@@ -1,0 +1,34 @@
+[project]
+name = "pacific-wings"
+version = "1.0.0"
+description = "Airline network strategy simulator for Pacific Wings, grounded in real aviation and macroeconomic data."
+requires-python = ">=3.11"
+
+[tool.ruff]
+# Wide on purpose: this codebase carries a lot of inline explanation and long
+# user-facing strings (the pros/cons sentences, the OpenAPI descriptions).
+line-length = 140
+target-version = "py311"
+exclude = ["frontend", ".venv", "data", "models"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM"]
+ignore = [
+    # zip(strict=) - every zip here pairs sequences built to the same length
+    # in the line above it. Worth revisiting if that stops being obvious.
+    "B905",
+]
+# E402 (imports not at top) and I001 (unsorted imports) used to be disabled
+# here, and had to be: the old layout put six directories on sys.path via
+# nineteen `sys.path.insert` calls, so imports genuinely could not come first,
+# and an isort pass would have hoisted them above the insert that made them
+# resolvable. Consolidating into one package removed the reason, so both rules
+# are back on.
+
+[tool.ruff.lint.isort]
+known-first-party = ["pacific_wings", "etl"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+filterwarnings = ["ignore::DeprecationWarning"]

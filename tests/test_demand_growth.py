@@ -1,55 +1,74 @@
-"""Fails if future-year demand forecasts go flat again (the XGBoost
-extrapolation bug: tree models saturate outside their training range, so
-market growth must be applied via engine.market_growth_multiplier).
+"""
+Market-growth regression tests.
 
-Run: python tests/test_demand_growth.py
+The original defect: gradient-boosted trees saturate outside their training
+range, so raw predictions for future years came back flat. Growth is applied
+instead as an explicit macro multiplier (IMF WEO long-run GDP x IATA income
+elasticity, blended with pre-COVID tourism CAGR - see
+pacific_wings/simulation/macro_projections.py).
+
+This file used to be the repo's entire test suite: a 55-line script asserting
+growth on HND alone. HND was the one route with load-factor headroom, so it
+passed while SIN, MEL and AKL all projected a dead-flat decade. The
+route-by-route version of that check now lives in test_simulator.py's
+test_projections_are_not_silently_flat; what remains here is the multiplier
+itself and the API path that applies it.
+
+Run:
+    pytest tests/
 """
 
-import sys
-from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
-sys.path.insert(0, str(ROOT / "simulation"))
+import pytest
 
-from engine import SimulationEngine  # noqa: E402
-from future_analysis import multi_year_route_projection  # noqa: E402
+from pacific_wings.simulation.engine import SimulationEngine
 
 
-def main() -> None:
+@pytest.fixture(scope="module")
+def engine():
+    return SimulationEngine()
+
+
+def test_multiplier_is_flat_inside_the_observed_window(engine):
+    assert engine.market_growth_multiplier("HND", engine._growth_anchor_year) == 1.0
+    assert engine.market_growth_multiplier("HND", engine._growth_anchor_year - 1) == 1.0
+
+
+def test_multiplier_grows_strictly_after_the_observed_window(engine):
+    anchor = engine._growth_anchor_year
+    series = [1.0] + [engine.market_growth_multiplier("HND", anchor + n) for n in range(1, 6)]
+    assert all(b > a for a, b in zip(series, series[1:])), series
+
+
+def test_faster_growing_economies_grow_faster(engine):
+    """Vietnam's GDP grows ~6%/yr against Japan's ~0.9%, and the multiplier
+    has to reflect that without producing something absurd."""
+    anchor = engine._growth_anchor_year
+    vietnam = engine.market_growth_multiplier("DAD", anchor + 4)
+    japan = engine.market_growth_multiplier("HND", anchor + 4)
+    assert vietnam > japan, (vietnam, japan)
+    assert 1.0 < vietnam < 2.0, vietnam
+
+
+@pytest.mark.parametrize("destination", ["SIN", "HND", "MEL", "AKL", "DAD"])
+def test_the_addressable_market_grows_on_every_route(engine, destination):
+    """The market must grow even where capacity stops Pacific Wings carrying
+    it - that gap is the whole argument for buying an aircraft."""
+    anchor = engine._growth_anchor_year
+    now = engine.run_scenario(destination, anchor + 1, 7)["demand"]["market_passengers"]
+    later = engine.run_scenario(destination, anchor + 5, 7)["demand"]["market_passengers"]
+    assert later > now * 1.02, (destination, now, later)
+
+
+def test_the_api_forecast_path_applies_the_same_growth():
+    """/demand_forecast predicts through the engine now, but it did not
+    always - it re-implemented the growth multiplier separately, which is
+    exactly how two endpoints drift apart. The shared helper now lives in
+    api.deps, where every router reads it from."""
+    from pacific_wings.api.deps import forecast_demand
+
     engine = SimulationEngine()
     anchor = engine._growth_anchor_year
-
-    # Multiplier: 1.0 inside training window, strictly growing after it.
-    assert engine.market_growth_multiplier("HND", anchor) == 1.0
-    m = [engine.market_growth_multiplier("HND", anchor + n) for n in range(1, 5)]
-    assert all(b > a for a, b in zip([1.0] + m, m)), f"multiplier not increasing: {m}"
-
-    # Demand: HND has load-factor headroom, so carried pax must grow.
-    proj = multi_year_route_projection("HND", anchor, anchor + 4)
-    first = proj["yearly"][str(anchor)]["annual_passengers"]
-    last = proj["yearly"][str(anchor + 4)]["annual_passengers"]
-    assert last > first * 1.02, f"HND pax flat: {first} -> {last}"
-    assert proj["passenger_cagr_pct"] > 0.5, f"CAGR still flat: {proj['passenger_cagr_pct']}"
-
-    # Vietnam grows faster than Japan (GDP 6% vs 0.9%) but nothing absurd.
-    dad_m = engine.market_growth_multiplier("DAD", anchor + 4)
-    hnd_m = engine.market_growth_multiplier("HND", anchor + 4)
-    assert dad_m > hnd_m, f"DAD {dad_m} should outgrow HND {hnd_m}"
-    assert dad_m < 2.0, f"DAD 4-year multiplier implausible: {dad_m}"
-
-    # The /demand_forecast API path must apply the same growth (it predicts
-    # with the raw model, separately from engine.run_scenario).
-    from api.main import _forecast_demand  # noqa: E402  (slow import)
-
-    now = _forecast_demand("HND", anchor, 6, None)["predicted_passengers"]
-    future = _forecast_demand("HND", anchor + 3, 6, None)["predicted_passengers"]
-    assert future > now * 1.01, f"API demand forecast flat: {now} -> {future}"
-
-    print(f"OK  HND pax {first} -> {last} (CAGR {proj['passenger_cagr_pct']}%)")
-    print(f"OK  4yr market multipliers: HND {hnd_m:.3f}, DAD {dad_m:.3f}")
-    print(f"OK  API forecast grows: {now:.0f} -> {future:.0f} (+3yr)")
-
-
-if __name__ == "__main__":
-    main()
+    now = forecast_demand("HND", anchor + 1, 6, None)["market_passengers"]
+    later = forecast_demand("HND", anchor + 4, 6, None)["market_passengers"]
+    assert later > now * 1.01, (now, later)

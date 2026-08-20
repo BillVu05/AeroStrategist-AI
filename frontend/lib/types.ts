@@ -1,11 +1,10 @@
 // TypeScript types mirroring the FastAPI response shapes in api/main.py.
 
-// Real confidence score (ml/confidence.py) - combines bootstrap ensemble
-// disagreement, per-route historical reliability, and extrapolation
-// distance from the training data into one 0-100 score. Replaces the
-// fabricated "Confidence %" badges removed during the realism audit.
+// Real confidence score (ml/confidence.py) - combines resampling spread,
+// per-route out-of-fold reliability, and extrapolation distance from the
+// observed data into one 0-100 score.
 export interface ConfidenceBreakdown {
-  bootstrap_uncertainty_deduction: number;
+  resampling_spread_deduction: number;
   historical_reliability_deduction: number;
   extrapolation_deduction: number;
 }
@@ -16,6 +15,15 @@ export interface DemandForecastResponse {
   year: number;
   month: number;
   avg_fare_usd: number;
+  // The total route market, all carriers - what the model forecasts.
+  market_passengers: number;
+  market_passengers_low: number;
+  market_passengers_high: number;
+  pacific_wings_share: number;
+  // Pacific Wings' slice of it, and what can actually be flown of that slice.
+  sellable_seats: number;
+  passengers_carried: number;
+  spilled_passengers: number;
   predicted_passengers: number;
   predicted_passengers_low: number;
   predicted_passengers_high: number;
@@ -85,14 +93,41 @@ export interface ScenarioParams {
 }
 
 export interface ScenarioDemand {
+  market_passengers: number;
+  market_multipliers: {
+    macro_growth: number;
+    fare_elasticity: number;
+    tourism: number;
+    gdp_shock: number;
+  };
+  market_growth_multiplier: number;
   predicted_demand_passengers: number;
   capacity_monthly: number;
+  sellable_seats: number;
   passengers_carried: number;
+  spilled_passengers: number;
   load_factor: number;
   demand_constrained_by_capacity: boolean;
   confidence_pct: number;
   confidence_breakdown: ConfidenceBreakdown;
   confidence_notes: string[];
+}
+
+export interface FleetCheck {
+  feasible: boolean;
+  shortfalls: string[];
+  note: string;
+  by_aircraft_type: Record<
+    string,
+    {
+      weekly_block_hours_required: number;
+      weekly_block_hours_available: number;
+      utilisation_pct: number | null;
+      tails_available: number;
+      tails_required: number;
+      feasible: boolean;
+    }
+  >;
 }
 
 export interface MarketShare {
@@ -111,6 +146,7 @@ export interface ScenarioResult {
   cost: CostBreakdown;
   profit_usd: number;
   market_share: MarketShare;
+  fleet: FleetCheck;
 }
 
 export interface WhatIfResponse {
@@ -119,7 +155,9 @@ export interface WhatIfResponse {
   delta: {
     profit_usd: number;
     passengers_carried: number;
+    spilled_passengers: number;
     pacific_wings_share: number;
+    fleet_feasible: boolean;
   };
   preset?: { name: string; label: string; description: string };
 }
@@ -228,7 +266,9 @@ export interface CopilotResponse {
   demand: {
     baseline: ScenarioDemand;
     scenario: ScenarioDemand;
-    delta: { passengers_carried: number; load_factor: number };
+    delta: { passengers_carried: number; spilled_passengers: number; load_factor: number };
+    market_passengers: number;
+    fleet: FleetCheck;
     demand_constrained_by_capacity: boolean;
   };
   finance: {

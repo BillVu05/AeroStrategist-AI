@@ -181,11 +181,20 @@ export default function CopilotReportView({ report }: { report: CopilotResponse 
                 positive={null}
               />
             </div>
+            {!report.demand.fleet.feasible && (
+              <div className="mt-3 flex items-start gap-2 rounded border border-primary/30 bg-primary/10 px-3 py-2">
+                <span className="material-symbols-outlined text-[14px] text-primary">flight</span>
+                <span className="font-label text-[10px] leading-relaxed text-primary">
+                  NEEDS MORE AIRCRAFT &mdash; {report.demand.fleet.shortfalls.join("; ")}
+                </span>
+              </div>
+            )}
             {report.demand.demand_constrained_by_capacity && (
               <div className="mt-3 flex items-center gap-2 rounded border border-secondary/20 bg-secondary/10 px-3 py-2">
                 <span className="material-symbols-outlined text-[14px] text-secondary">warning</span>
                 <span className="font-label text-[10px] text-secondary">
-                  SCENARIO DEMAND CONSTRAINED BY CAPACITY
+                  DEMAND CONSTRAINED BY CAPACITY &mdash;{" "}
+                  {fmtPax(report.demand.scenario.spilled_passengers)} PASSENGERS TURNED AWAY
                 </span>
               </div>
             )}

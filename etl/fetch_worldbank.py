@@ -11,10 +11,11 @@ Indicators:
 Output: data/reference/macro_indicators.csv
 """
 
-from pathlib import Path
 
 import pandas as pd
 import requests
+
+from pacific_wings import paths
 
 WB_BASE_URL = "https://api.worldbank.org/v2/country/{countries}/indicator/{indicator}"
 
@@ -30,7 +31,7 @@ INDICATORS = {
 }
 
 DATE_RANGE = "2010:2024"
-OUTPUT_PATH = Path(__file__).resolve().parents[1] / "data" / "reference" / "macro_indicators.csv"
+OUTPUT_PATH = paths.MACRO_INDICATORS
 
 
 def fetch_indicator(indicator_code: str) -> pd.DataFrame:

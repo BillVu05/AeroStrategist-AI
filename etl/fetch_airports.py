@@ -7,10 +7,10 @@ Output: data/reference/airports.csv
 """
 
 import math
-from pathlib import Path
 
 import pandas as pd
-import requests
+
+from pacific_wings import paths
 
 OURAIRPORTS_URL = "https://davidmegginson.github.io/ourairports-data/airports.csv"
 
@@ -18,7 +18,7 @@ OURAIRPORTS_URL = "https://davidmegginson.github.io/ourairports-data/airports.cs
 # HND (Haneda) not NRT (Narita) - matches real Sydney-Tokyo service today.
 RELEVANT_IATA = ["SYD", "SIN", "HND", "MEL", "AKL", "DAD"]
 
-OUTPUT_PATH = Path(__file__).resolve().parents[1] / "data" / "reference" / "airports.csv"
+OUTPUT_PATH = paths.AIRPORTS
 
 
 def haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:

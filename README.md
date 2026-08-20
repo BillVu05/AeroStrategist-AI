@@ -1,15 +1,71 @@
 # Airline Strategy Simulator
 
-A simulation and analytics platform for **Pacific Wings**, a fictional airline
-based at Sydney (SYD), grounded in real airport, geographic, and macroeconomic
-data. See [PLAN.md](PLAN.md) for the full project roadmap.
+A network strategy simulator for **Pacific Wings**, a fictional airline based
+at Sydney (SYD), built on real airport, traffic, and macroeconomic data.
+
+Ask it what happens if you cut fares, add frequency, swap aircraft, or open a
+route no airline flies today — and get an answer that responds to the lever you
+pulled, bounded by the aeroplanes you actually own.
 
 **For the full math** behind every forecast — demand, revenue, cost, market
 share, Monte Carlo, macro projections, and the worldwide open-route gravity
 model — see [`docs/calculations_and_models.md`](docs/calculations_and_models.md).
-That doc also explains what specifically makes the modeling approach go
-beyond a typical toy simulator (extrapolation-safe forecasting, a three-signal
-confidence score, calibrated-not-fitted market models, and more).
+Current model scores are in [`docs/model_metrics.md`](docs/model_metrics.md),
+which the training run regenerates so it cannot drift from the artifact.
+
+## How a scenario is computed
+
+Every strategy lever reaches the P&L through one named, documented mechanism:
+
+```
+    market size          pacific_wings/ml/market_model.py, from real BITRE city-pair data
+      x macro growth     pacific_wings/simulation/macro_projections.py
+      x fare elasticity  MARKET_FARE_ELASTICITY (-0.8)
+      = addressable market for the month
+      x market share     pacific_wings/simulation/market_share.py (QSI multinomial logit)
+      = Pacific Wings demand
+      capped at capacity x MAX_SELLABLE_LOAD_FACTOR (0.88)
+      = passengers carried, remainder reported as spilled
+      -> revenue, cost, profit, and a fleet feasibility check
+```
+
+The model forecasts the **whole route market**, not Pacific Wings' slice of it.
+The slice is derived, so frequency, price, service rating and competitor entry
+all move it. Own-price elasticity comes out near -1.3, inside the -0.8 to -1.5
+range the literature reports; profit has an interior maximum in both price and
+frequency, which is what makes the tool answerable.
+
+`pacific_wings/simulation/fleet.py` then checks the schedule against tail
+counts and daily block hours, so a scenario that needs eleven A321neos says so
+instead of pricing them as free.
+
+## Repository layout
+
+```
+pacific_wings/          one importable package - no sys.path manipulation
+├── paths.py            every file location, defined once
+├── simulation/         the deterministic model: engine, cost, revenue,
+│                       market share, fleet, Monte Carlo, macro projections
+├── ml/                 market-size model, its selection, and confidence
+├── analysis/           screening for routes not in the network
+├── agents/             the LLM narration layer, and nothing else
+├── storage/            saved reports
+└── api/                FastAPI: config, deps, schemas, routes/ by domain
+
+etl/                    data pipeline (run with -m from the repo root)
+data/                   reference inputs and derived observations
+models/                 the fitted market model and its scoreboard
+docs/                   methodology; model_metrics.md is generated
+frontend/               Next.js UI
+tests/                   84 regression tests
+db/                     reference schema for the ETL's optional Postgres target
+```
+
+Everything importable lives under one package. The layout used to be six
+top-level directories that reached each other through nineteen
+`sys.path.insert` calls — which forced two lint rules off and filed an
+866-line route calculator under `agents/` because that is where it was first
+written.
 
 ## Data model
 
@@ -20,8 +76,8 @@ confidence score, calibrated-not-fitted market models, and more).
 | Real — reference | Aircraft seats, range, fuel burn, CASM | Curated from Airbus/Boeing public spec sheets |
 | Real — fuel | Jet fuel price history | EIA (planned) |
 | Real — competitors | Carriers, frequencies, Skytrax ratings, spot-checked fares per route | Flight-aggregator schedules + Skytrax (see `etl/generate_synthetic_demand.py`) |
-| Real-derived — demand | Monthly passengers/load factor for SIN, HND, AKL (+ a population-scaled estimate for candidate route DAD) | BITRE international airline statistics (see `etl/fetch_real_aviation_stats.py`) |
-| Synthetic — calibrated | Demand/load factor for SYD-MEL (domestic — no real source downloaded), fares for all routes, market share | Generated from real features + noise, calibrated to published benchmarks |
+| Real — market size | Monthly total route market (all carriers, one-way-equivalent) for SIN, HND, AKL (+ a population-scaled estimate for candidate route DAD) | BITRE international airline statistics (see `etl/fetch_real_aviation_stats.py`) |
+| Synthetic — calibrated | Market size for SYD-MEL (domestic — no real source downloaded, anchored to the published ~9.2M/yr city-pair total), fares for all routes, market share | Generated from real features + noise, calibrated to published benchmarks |
 
 This separation is intentional and documented throughout: real drivers,
 real data where it's freely available, and synthetic-but-plausible
@@ -40,62 +96,66 @@ git-ignored and never committed, so each user's key stays local to their own
 machine - cloning this repo does not give you access to anyone else's key.
 
 **A Gemini key is entirely optional.** Every endpoint works without one,
-including `/copilot`: the simulation results (`scenario`, `demand`, `finance`
-- all real numbers from the Phase 3-7 model/engine, no LLM involved) are
-always returned. Only the `market`, `risk`, and `strategy` sections of
-`/copilot` depend on Gemini; without a key they return
-`{"available": false, ...}` with an explanatory notice instead of narration.
+including `/copilot`: the simulation results (`scenario`, `demand`, `finance` —
+all computed by the engine, no LLM involved) are always returned. Only the
+`market`, `risk`, and `strategy` sections depend on Gemini; without a key they
+return `{"available": false, ...}` with an explanatory notice instead of
+narration. No agent in this codebase produces a number that reaches a
+response.
 
 ## ETL pipeline
 
-Run in order from the `etl/` directory:
+Run in order from the repo root:
 
 ```bash
-python fetch_airports.py          # -> data/reference/airports.csv
-python fetch_worldbank.py         # -> data/reference/macro_indicators.csv
-python build_airline_profile.py   # -> data/airline_profile.json
-python generate_synthetic_demand.py  # -> data/processed/{demand_observations,competitors}.csv
-python fetch_real_aviation_stats.py  # -> overwrites demand_observations.csv with real BITRE figures
+python -m etl.fetch_airports              # -> data/reference/airports.csv
+python -m etl.fetch_worldbank             # -> data/reference/macro_indicators.csv
+python -m etl.build_airline_profile       # -> data/airline_profile.json
+python -m etl.generate_synthetic_demand   # -> data/processed/{demand_observations,competitors}.csv
+python -m etl.fetch_real_aviation_stats   # -> overwrites market_passengers with real BITRE figures
 ```
 
 `data/aircraft_specs.json` is a static curated table (no fetch needed).
 
-`fetch_real_aviation_stats.py` requires two BITRE spreadsheets to already be
+`etl.fetch_real_aviation_stats` requires two BITRE spreadsheets to already be
 present in `data/raw/` (large government files, gitignored, downloaded
 manually since BITRE/data.gov.au block programmatic fetches) — see the
 script's module docstring for exact filenames, sources, and what's real vs.
 assumption per route.
 
-## Database
+## Database (optional)
 
-Start PostgreSQL (schema from `db/schema.sql` is applied automatically on
-first start):
-
-```bash
-docker compose up -d
-```
-
-Then load all reference/profile/processed data:
+**The API never connects to Postgres.** It reads the fitted market model and
+the reference files directly, which is why the container needs no database at
+runtime. Postgres exists as a target for the ETL and a source the training
+script tries before falling back to the CSV — so it is opt-in:
 
 ```bash
-python etl/load_db.py
+docker compose --profile etl up -d db   # schema from db/schema.sql applied on first start
+python -m etl.load_db
 ```
 
 Connection defaults to `postgresql+psycopg2://airline:airline@localhost:5432/airline_sim`,
-overridable via the `DATABASE_URL` env var.
+overridable via `DATABASE_URL`.
 
-## Demand forecasting (Phase 3)
+## The market model
 
-Train the model (reads `demand_observations` from Postgres, writes to `models/`):
+Fit and select the market model (reads `demand_observations` from Postgres or
+the CSV fallback, writes to `models/` and `docs/model_metrics.md`):
 
 ```bash
-python ml/train_demand_model.py
+python -m pacific_wings.ml.train
 ```
+
+Each run scores two candidate models and two naive baselines on the same
+forward-looking holdout, deploys the winner, and prints how it compares to the
+best baseline. A model that cannot beat same-month-last-year is not paying for
+its complexity, and the run says so.
 
 Serve the forecast API:
 
 ```bash
-uvicorn api.main:app --reload
+uvicorn pacific_wings.api.main:app --reload
 ```
 
 ```bash
@@ -105,7 +165,7 @@ curl "http://127.0.0.1:8000/demand_forecast?destination=SIN&year=2025&month=7"
 Optional query params: `origin` (default `SYD`), `avg_fare_usd` (defaults to
 the route's historical average if omitted).
 
-## Revenue & cost model (Phases 4-5)
+## Revenue and cost
 
 `/route_economics` chains demand forecast -> revenue breakdown -> cost
 breakdown -> profit for a route/month. See `docs/cost_assumptions.md` for
@@ -122,12 +182,12 @@ curl "http://127.0.0.1:8000/route_economics?destination=SIN&year=2025&month=7&fu
 Optional query params: `avg_fare_usd`, `fuel_price_usd_per_gallon` (defaults
 to the most recent year in `data/reference/fuel_prices.csv`).
 
-## Simulation engine & what-if scenarios (Phases 6-7)
+## What-if scenarios
 
-`/what_if` runs the full simulation engine (`simulation/engine.py`):
-demand -> capacity-constrained passengers carried -> revenue -> cost ->
-profit -> market share (Phase 6, `simulation/market_share.py`), comparing a
-baseline against a scenario with the given deltas.
+`/what_if` runs the full simulation engine
+(`pacific_wings/simulation/engine.py`) and compares a baseline against a
+scenario: market size, market share, passengers carried, spilled demand,
+revenue, cost, profit, and whether the fleet can fly the result.
 
 ```bash
 # 10% fare cut on SYD-SIN
@@ -142,12 +202,17 @@ curl "http://127.0.0.1:8000/what_if?destination=HND&year=2025&month=12&aircraft_
 
 Scenario params (all optional, default 0/unchanged): `price_delta_pct`,
 `frequency_delta`, `fuel_price_usd_per_gallon`, `aircraft_type`,
-`rating_delta`. See `docs/cost_assumptions.md` for the market share and
-simulation engine methodology.
+`rating_delta`. Every one is bounded — out-of-range values return 422 rather
+than a confident answer. See `docs/cost_assumptions.md` for the methodology.
+
+Two response fields are worth knowing about. `demand.spilled_passengers` is
+demand you turned away, and on a capacity-bound route it is the number that
+moves when profit cannot. `fleet` says whether the schedule fits the aircraft
+you own, and names the shortfall when it does not.
 
 ### Named presets
 
-`/what_if_presets` lists three ready-made scenarios (`simulation/presets.py`)
+`/what_if_presets` lists three ready-made scenarios (`pacific_wings/simulation/presets.py`)
 that can be passed as `preset=` instead of, or alongside, manual deltas:
 
 ```bash
@@ -219,7 +284,7 @@ simulation/
 ## Open-route exploration: any airport worldwide
 
 Every endpoint above operates on Pacific Wings' five known routes. This
-engine (`agents/open_route_analyst.py`) answers a different question — "what
+engine (`pacific_wings/analysis/open_route.py`) answers a different question — "what
 if Pacific Wings flew somewhere it never has?" — using a gravity model
 calibrated against real bilateral markets instead of the trained demand
 model (no training data exists for an arbitrary new city pair). Full
@@ -249,13 +314,13 @@ already in the network.
 ```
 agents/
   world_airports.py       Global airport database, haversine distance, per-country macro table
-  open_route_analyst.py   Gravity model, cost/revenue/risk scoring, verdict logic
+  analysis/open_route.py   Gravity model, cost/revenue/risk scoring, verdict logic
   open_route_agents.py    5-agent Gemini narrative layer for open-route analysis
 ```
 
-## AI agents & copilot (Phases 8-9)
+## AI agents & copilot
 
-`/copilot` runs a LangGraph pipeline (`agents/graph.py`) of five agents:
+`/copilot` runs a LangGraph pipeline (`pacific_wings/agents/graph.py`) of five agents:
 
 ```
 simulation -> demand -> finance -> market -> risk -> strategy
@@ -282,7 +347,7 @@ via `GEMINI_MODEL` (defaults to `gemini-2.5-flash`).
 
 An alternative to the fixed `/copilot` pipeline: one Gemini conversation per
 turn using automatic function calling over **12 tools**
-(`agents/chat_agent.py`) spanning the entire stack — route lookup,
+(`pacific_wings/agents/chat_agent.py`) spanning the entire stack — route lookup,
 deterministic simulation, Monte Carlo, market context, multi-year demand
 trend, network opportunity ranking, macro projection, long-term route
 analysis/ranking, and open-route analysis/comparison for any airport
@@ -299,9 +364,9 @@ curl -X POST "http://127.0.0.1:8000/chat" -H "Content-Type: application/json" \
 Completed analyses (a `/copilot` run or an open-route feasibility study) can
 be saved for later browsing via `POST /reports`, listed via `GET /reports`,
 and retrieved in full via `GET /reports/{id}` - backed by a flat JSON file
-(`data/reports.json`, `agents/report_store.py`), no database required.
+(`data/reports.json`, `pacific_wings/storage/reports.py`), no database required.
 
-## Frontend dashboard (Phase 11)
+## Frontend dashboard
 
 A Next.js (App Router, TypeScript, Tailwind, Recharts, React-Leaflet) dashboard
 in `frontend/` provides six views:
@@ -336,7 +401,7 @@ in `frontend/` provides six views:
 Run the backend and frontend in separate terminals:
 
 ```bash
-uvicorn api.main:app --reload
+uvicorn pacific_wings.api.main:app --reload
 ```
 
 ```bash
@@ -348,7 +413,7 @@ npm run dev
 
 Then open http://localhost:3000.
 
-## Deployment (Phase 12)
+## Deployment
 
 The whole stack (PostgreSQL, FastAPI backend, Next.js frontend) can be run with
 Docker Compose - useful for a local/portfolio demo without installing Python
@@ -371,86 +436,101 @@ Open http://localhost:3000. The frontend image is built with
 `NEXT_PUBLIC_API_BASE_URL=http://localhost:8000` (overridable via the `args:`
 in `docker-compose.yml`).
 
-To retrain the demand model or reload the database from inside Docker, run
-the ETL scripts and `ml/train_demand_model.py` locally against `db` as
-described above, then `docker compose up --build api` to bake the updated
-`models/` into the API image.
+To refit the market model or reload the database, run the ETL and
+`python -m pacific_wings.ml.train` locally, then
+`docker compose up --build api` to bake the updated `models/` into the image.
 
 ## Project structure
 
 ```
-data/
-  aircraft_specs.json       Real fleet specs (A320-200, A321neo, B787-9)
-  airline_profile.json      Generated: Pacific Wings routes + fleet + market data
-  reports.json              Saved Report Library entries (flat-file store)
-  reference/
-    airports.csv            Real airport coordinates/distances
-    macro_indicators.csv    Real GDP/population/tourism per country/year
-    fuel_prices.csv          Real EIA annual jet fuel spot prices
-  processed/
-    demand_observations.csv Monthly demand (Phase 3 training target) - real BITRE-derived
-                             for SIN/HND/AKL/DAD, synthetic formula for domestic SYD-MEL
-    competitors.csv          Real carriers/frequencies/ratings/fares per route
-  raw/
-    bitre_*.xlsx              Manually-downloaded BITRE source spreadsheets (gitignored)
-models/
-  demand_model.json          Trained XGBoost demand model
-  feature_columns.json        Feature column order
-  metrics.json                Holdout evaluation metrics, cross-validation, residual quantiles
-  bootstrap/model_*.json      Bootstrap ensemble (confidence scoring)
-ml/
-  features.py                 Shared feature engineering (train + API)
-  train_demand_model.py       Phase 3 model training
-  confidence.py                Three-signal forecast confidence scoring
-simulation/
-  revenue.py                   Phase 4 revenue model
-  cost.py                       Phase 5 cost model
-  market_share.py              Phase 6 market share model
-  engine.py                     Phase 7 simulation engine
-  monte_carlo.py                Distributional what-if simulator
-  presets.py                    Named what-if scenarios
-  macro_projections.py         GDP/population/tourism/fuel projection models
-  future_analysis.py           Multi-year route P&L and network portfolio analysis
-agents/
-  llm_client.py                Gemini client wrapper (graceful degradation, no API key)
-  context.py                   Real macro/tourism + competitor context for Market/Risk agents
-  demand_agent.py              Demand agent (pure extraction, no LLM)
-  finance_agent.py             Finance agent (pure extraction, no LLM)
-  market_agent.py              Market agent (Gemini narration)
-  risk_agent.py                Risk agent (Gemini narration)
-  strategy_agent.py            Strategy agent / executive summary (Gemini narration)
-  graph.py                     Phase 8 LangGraph StateGraph wiring all five agents
-  copilot.py                   Phase 9 copilot orchestration
-  chat_agent.py                 Conversational 12-tool function-calling copilot
-  world_airports.py             Global airport database + per-country macro table
-  open_route_analyst.py         Gravity model for any worldwide destination
-  open_route_agents.py          5-agent narrative layer for open-route analysis
-  report_store.py               Report Library persistence (flat JSON file)
-api/
-  main.py                      FastAPI app (see endpoint list above)
-db/
-  schema.sql                 PostgreSQL schema
-etl/
-  fetch_airports.py
-  fetch_worldbank.py
-  build_airline_profile.py
+pacific_wings/                   One importable package. No sys.path manipulation.
+  paths.py                       Every file location, defined once
+  simulation/
+    engine.py                    The scenario core: market -> share -> spill -> P&L
+    market_share.py              QSI multinomial logit over the real carriers
+    cost.py                      CASM split into fuel and per-departure components
+    revenue.py                   Cabin mix, blended fare, ancillary revenue
+    fleet.py                     Block-hour feasibility against real tail counts
+    monte_carlo.py               Outcome distributions from real input volatility
+    macro_projections.py         GDP / tourism / fuel projected forward
+    future_analysis.py           Multi-year route and network projections
+    presets.py                   Named what-if scenarios
+  ml/
+    market_model.py              The deployed market-size model, and its rival
+    train.py                     Fits both, scores them against naive baselines,
+                                 deploys the winner, regenerates model_metrics.md
+    confidence.py                Resampling spread + reliability + extrapolation
+    features.py                  Feature engineering for the XGBoost candidate
+  analysis/
+    open_route.py                Screening any worldwide destination
+    world_airports.py            Global airport database + per-country macro
+  agents/                        LLM narration only; no agent produces a number
+    llm_client.py                Gemini client, degrades to a notice without a key
+    graph.py                     LangGraph wiring the five report agents
+    chat_agent.py                Conversational copilot, 12 function-calling tools
+    copilot.py                   Report pipeline orchestration
+    {demand,finance,market,risk,strategy}_agent.py
+    open_route_agents.py         Narrative layer over a screening run
+    context.py                   Real macro/competitor context for the agents
+  storage/reports.py             Report library persistence (flat JSON)
+  api/
+    main.py                      Assembles the app from its routers
+    config.py                    CORS, bearer auth, rate limit, parameter bounds
+    deps.py                      Shared singletons + the one forecast helper
+    schemas.py                   Request/response models
+    routes/                      Endpoints grouped by what they answer:
+                                 forecasting, scenarios, network, screening, reports
+
+etl/                             Data pipeline; run with -m from the repo root
+data/                            Reference inputs, derived observations, saved reports
+models/                          Fitted market model, metrics, bootstrap spread
 docs/
-  calculations_and_models.md   Consolidated forecasting/calculation methodology (start here)
-  cost_assumptions.md          Phases 4-6 cost/revenue/market-share methodology
-  agent_architecture.md        Phases 8-9 agent/copilot methodology
-  data_methodology.md          Real vs. real-derived vs. illustrative, field by field
-Dockerfile                   Phase 12: backend image (FastAPI + pre-trained model)
-docker-compose.yml            Phase 12: db + api + frontend services
+  calculations_and_models.md     Full methodology - start here
+  model_metrics.md               Live model scores (generated by every train run)
+  data_methodology.md            Real vs. derived vs. calibrated, field by field
+  cost_assumptions.md            Cost, revenue and market-share methodology
+  agent_architecture.md          The LLM layer, and where the numbers come from
+  project_history.md             Original roadmap, kept as history. Superseded.
+db/schema.sql                    Reference schema for the ETL's optional Postgres
+tests/                           84 regression tests, each naming a real defect
+Dockerfile                       Backend image (API + fitted model, no database)
+docker-compose.yml               api + frontend; Postgres behind the `etl` profile
 frontend/
-  Dockerfile                  Phase 12: frontend image (Next.js standalone build)
   app/
-    page.tsx                    Dashboard ("/")
-    routes/page.tsx             Route Explorer (+ open-route analysis)
-    market/page.tsx             Market & Demand
-    scenario-lab/page.tsx       Scenario Lab (what-if / stress test / long-range)
-    copilot/page.tsx            AI Copilot (chat + 5-agent report pipeline)
-    reports/page.tsx            Reports Library
-    reports/[id]/page.tsx       Saved report detail view
-  components/                   Shared UI (nav, charts, map, scenario form, ...)
-  lib/                          API client, types, constants
+    page.tsx                     Dashboard ("/")
+    routes/page.tsx              Route Explorer (+ open-route screening)
+    market/page.tsx              Market & Demand
+    scenario-lab/page.tsx        Scenario Lab (what-if / stress test / long-range)
+    copilot/page.tsx             AI Copilot (chat + agent report pipeline)
+    reports/page.tsx             Reports Library
+    reports/[id]/page.tsx        Saved report detail
+  components/                    Shared UI (nav, charts, map, scenario form, ...)
+  lib/                           API client, types, constants
 ```
+
+## Tests
+
+```bash
+pytest tests/          # 84 regression tests
+ruff check .           # lint
+```
+
+Every test corresponds to a defect that shipped: profit must have an interior
+maximum in both price and frequency, adding capacity to a spilling route must
+carry more passengers, load factor must be physically achievable, confidence
+must fall as a request moves away from the observed data, the open-route
+screener and the network simulator must never disagree about whether a route
+makes money, and invalid inputs must be rejected rather than answered.
+
+The model modules also carry `__main__` self-checks that assert their
+calibration constants still produce sane output (`pacific_wings/simulation/market_share.py`,
+`pacific_wings/simulation/revenue.py`, `pacific_wings/simulation/fleet.py`, `pacific_wings/ml/confidence.py`,
+`pacific_wings/analysis/open_route.py`). CI runs both, plus the frontend typecheck,
+lint and build — see `.github/workflows/ci.yml`.
+
+## API access control
+
+The API runs open by default, which is right for a local demo, and `/health`
+says so. For anything reachable beyond localhost set `API_TOKEN` (gates the
+report-mutating and LLM-backed endpoints) and `ALLOWED_ORIGINS` (CORS). See
+`.env.example`.

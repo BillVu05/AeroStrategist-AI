@@ -59,6 +59,15 @@ export default function ComparisonCards({ baseline, scenario, delta }: Compariso
       deltaRaw: delta.passengers_carried,
     },
     {
+      // On a spilling route this is the row that moves when profit does not:
+      // demand grew, the aeroplanes did not, and the difference is turned away.
+      label: "Spilled demand",
+      baseline: baseline.demand.spilled_passengers.toLocaleString(),
+      scenario: scenario.demand.spilled_passengers.toLocaleString(),
+      delta: signed(delta.spilled_passengers.toLocaleString(), delta.spilled_passengers),
+      deltaRaw: -delta.spilled_passengers, // spilling more is a worse outcome
+    },
+    {
       label: "Load factor",
       baseline: fmtPct(baseline.demand.load_factor),
       scenario: fmtPct(scenario.demand.load_factor),

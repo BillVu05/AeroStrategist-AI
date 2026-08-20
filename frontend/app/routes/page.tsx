@@ -388,9 +388,12 @@ function RouteExplorerPageInner() {
   useEffect(() => {
     if (!selected) return;
     let cancelled = false;
-    setSelectedData(null);
 
     async function loadSelected() {
+      // Clearing the previous route's panel belongs inside the async body,
+      // not in the effect body: a synchronous setState there triggers a
+      // cascading render on every selection change.
+      if (!cancelled) setSelectedData(null);
       try {
         const [market, ...demandMonths] = await Promise.all([
           getMarketContext(selected!, DEFAULT_YEAR),

@@ -1,5 +1,13 @@
 services:
+  # Optional, and off by default: the API never connects to it. Postgres is a
+  # target for the ETL (etl/load_db.py) and a source the training script tries
+  # before falling back to the CSV; the running app reads the fitted model and
+  # the reference files that ship in the image. Starting a database the app
+  # does not use invited the reasonable question of what it was for.
+  #
+  #   docker compose --profile etl up -d db
   db:
+    profiles: ["etl"]
     image: postgres:16-alpine
     container_name: airline_sim_db
     environment:
@@ -19,6 +27,14 @@ services:
     container_name: airline_sim_api
     env_file:
       - .env
+    environment:
+      # Comma-separated. Must include wherever the frontend is actually served
+      # from, or the browser blocks every request.
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost:3000}
+      # Unset = open (correct for a local demo). Set it for anything reachable
+      # beyond localhost; the frontend needs the same value.
+      API_TOKEN: ${API_TOKEN:-}
+      LLM_RATE_LIMIT_PER_MINUTE: ${LLM_RATE_LIMIT_PER_MINUTE:-20}
     ports:
       - "8000:8000"
     volumes:
@@ -29,7 +45,8 @@ services:
       context: ./frontend
       dockerfile: Dockerfile
       args:
-        NEXT_PUBLIC_API_BASE_URL: http://localhost:8000
+        NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:8000}
+        NEXT_PUBLIC_API_TOKEN: ${API_TOKEN:-}
     container_name: airline_sim_frontend
     ports:
       - "3000:3000"

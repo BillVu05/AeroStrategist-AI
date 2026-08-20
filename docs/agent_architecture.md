@@ -1,24 +1,26 @@
-# AI Agent Architecture (Phases 8-9)
+# AI Agent Architecture
 
 This documents how the LangGraph agents and the Copilot endpoint
 (`agents/`, `/copilot`) split work between the deterministic simulation
-engine (Phases 3-7) and Claude (LLM narration), so results can be
+engine and the LLM narration layer, so results can be
 interpreted honestly - same spirit as `docs/cost_assumptions.md`.
 
 ## Strict separation of numbers vs. narration
 
-> "Demand/Finance agents call the simulation engine directly (no
-> hallucinated numbers - numbers come from Phases 3-6, LLM only narrates
-> them)." - PLAN.md, Phase 8/9
+**The rule: no agent in this codebase produces a number that reaches a
+response.** Demand and finance figures come from `SimulationEngine`; the LLM
+layer narrates them and nothing else. Every agent degrades to an explicit
+`{"available": false, ...}` notice when no API key is set, so the numeric
+answer is identical with or without one.
 
-- **Demand agent** (`agents/demand_agent.py`) and **Finance agent**
-  (`agents/finance_agent.py`) are pure functions with no LLM call. They
+- **Demand agent** (`pacific_wings/agents/demand_agent.py`) and **Finance agent**
+  (`pacific_wings/agents/finance_agent.py`) are pure functions with no LLM call. They
   extract and label fields already computed by
   `SimulationEngine.compare()` (passengers, load factor, revenue, cost,
   profit, deltas). Given the same simulation output, they always return the
   same result.
 - **Market**, **Risk**, and **Strategy** agents call Claude
-  (`agents/llm_client.py`) to produce qualitative text. Their prompts
+  (`pacific_wings/agents/llm_client.py`) to produce qualitative text. Their prompts
   include the exact numbers from the simulation/demand/finance steps and
   instruct the model to reference those numbers as-is, not recompute or
   invent new ones.
@@ -27,25 +29,25 @@ interpreted honestly - same spirit as `docs/cost_assumptions.md`.
 
 | Agent | Module | LLM? | Input | Output |
 |---|---|---|---|---|
-| Demand | `agents/demand_agent.py` | No | `engine.compare()` result | baseline/scenario/delta passenger & load-factor facts |
-| Finance | `agents/finance_agent.py` | No | `engine.compare()` result | baseline/scenario/delta revenue/cost/profit facts |
-| Market | `agents/market_agent.py` | Yes | route market context (`agents/context.py`) | qualitative commentary on demand drivers, tourism, competition |
-| Risk | `agents/risk_agent.py` | Yes | market context + simulation comparison | 2-4 material risks (fuel, competition, capacity, macro) |
-| Strategy | `agents/strategy_agent.py` | Yes | demand/finance summaries + market/risk commentary | executive summary + proceed/caution/no-go recommendation |
+| Demand | `pacific_wings/agents/demand_agent.py` | No | `engine.compare()` result | baseline/scenario/delta passenger & load-factor facts |
+| Finance | `pacific_wings/agents/finance_agent.py` | No | `engine.compare()` result | baseline/scenario/delta revenue/cost/profit facts |
+| Market | `pacific_wings/agents/market_agent.py` | Yes | route market context (`pacific_wings/agents/context.py`) | qualitative commentary on demand drivers, tourism, competition |
+| Risk | `pacific_wings/agents/risk_agent.py` | Yes | market context + simulation comparison | 2-4 material risks (fuel, competition, capacity, macro) |
+| Strategy | `pacific_wings/agents/strategy_agent.py` | Yes | demand/finance summaries + market/risk commentary | executive summary + proceed/caution/no-go recommendation |
 
 ## Market/Risk context: real data, no live retrieval
 
-PLAN.md's Phase 8 description allows Market/Risk agents to use "real
+The original roadmap (docs/project_history.md) allows Market/Risk agents to use "real
 web/news context via LLM + retrieval for qualitative factors". No live
-web/news retrieval is wired up in this project - instead, `agents/context.py`
+web/news retrieval is wired up in this project - instead, `pacific_wings/agents/context.py`
 re-shapes the **real** macro data (GDP, GDP growth, population - World Bank,
 `data/reference/macro_indicators.csv`), **real** route data (distance,
 tourism arrivals baseline - `data/airline_profile.json`), and
 **calibrated-synthetic** competitor data (`data/processed/competitors.csv`)
-that already feed the Phase 3 demand model. Claude interprets this data
+that already feed the demand model. Claude interprets this data
 qualitatively; it does not introduce new figures.
 
-## LangGraph pipeline (`agents/graph.py`)
+## LangGraph pipeline (`pacific_wings/agents/graph.py`)
 
 ```
 simulation -> demand -> finance -> market -> risk -> strategy
@@ -57,7 +59,7 @@ simulation -> demand -> finance -> market -> risk -> strategy
 - `market`, `risk`, `strategy`: sequential Claude calls, each building on the
   prior agents' output.
 
-## Copilot (`agents/copilot.py`, `/copilot` endpoint)
+## Copilot (`pacific_wings/agents/copilot.py`, `/copilot` endpoint)
 
 `run_copilot(destination, year, month, **scenario_kwargs)` runs the graph
 above and returns a single response combining:
@@ -68,7 +70,7 @@ above and returns a single response combining:
 
 ## Missing API key / degraded mode
 
-`agents/llm_client.py` resolves `GEMINI_API_KEY` (or `GOOGLE_API_KEY`) from
+`pacific_wings/agents/llm_client.py` resolves `GEMINI_API_KEY` (or `GOOGLE_API_KEY`) from
 the environment via the official `google-genai` SDK (`genai.Client()`). The
 Gemini API has a free tier (no billing required) - get a key at
 https://aistudio.google.com/apikey. If no key is set, or the API call fails
@@ -81,7 +83,7 @@ availability.
 Default model: `gemini-2.5-flash` (overridable via the `GEMINI_MODEL` env
 var).
 
-## Chat agent (`agents/chat_agent.py`, `/chat` endpoint)
+## Chat agent (`pacific_wings/agents/chat_agent.py`, `/chat` endpoint)
 
 A separate, conversational alternative to the `/copilot` pipeline above,
 powering the AI Strategy Assistant chat UI (`frontend/app/copilot/page.tsx`).
@@ -91,18 +93,18 @@ Gemini is given Python functions as tools and decides for itself which to
 call, with what arguments, and how many times, before writing one unified
 reply.
 
-Tools exposed to the model (`agents/chat_agent.py:CHAT_TOOLS`, 12 total):
+Tools exposed to the model (`pacific_wings/agents/chat_agent.py:CHAT_TOOLS`, 12 total):
 
 | Tool | Wraps | Purpose |
 |---|---|---|
-| `list_routes` | `ml/features.py` `ReferenceData.routes_by_destination` | Resolve city/country names to IATA codes; check active vs. candidate routes |
-| `list_what_if_presets` | `simulation/presets.py` | Discover named scenario presets |
-| `simulate_route` | `SimulationEngine.compare()` | Baseline-vs-scenario demand/revenue/cost/profit/market-share for a route, given fare/frequency/fuel/aircraft/rating changes or a preset. Also accepts `fuel_price_delta_pct` (e.g. "fuel prices rise 25%"), converted internally via `simulation/cost.py:latest_fuel_price()` |
-| `run_route_monte_carlo` | `simulation/monte_carlo.py` | Distributional outcome (percentiles, probability of loss) instead of one point estimate - used for risk/uncertainty/"how likely" questions |
-| `get_market_context` | `agents/context.py` | Real macro/tourism/competitor data for qualitative commentary |
+| `list_routes` | `pacific_wings/ml/features.py` `ReferenceData.routes_by_destination` | Resolve city/country names to IATA codes; check active vs. candidate routes |
+| `list_what_if_presets` | `pacific_wings/simulation/presets.py` | Discover named scenario presets |
+| `simulate_route` | `SimulationEngine.compare()` | Baseline-vs-scenario demand/revenue/cost/profit/market-share for a route, given fare/frequency/fuel/aircraft/rating changes or a preset. Also accepts `fuel_price_delta_pct` (e.g. "fuel prices rise 25%"), converted internally via `pacific_wings/simulation/cost.py:latest_fuel_price()` |
+| `run_route_monte_carlo` | `pacific_wings/simulation/monte_carlo.py` | Distributional outcome (percentiles, probability of loss) instead of one point estimate - used for risk/uncertainty/"how likely" questions |
+| `get_market_context` | `pacific_wings/agents/context.py` | Real macro/tourism/competitor data for qualitative commentary |
 | `forecast_demand_trend` | `SimulationEngine.compare()`, run monthly across years | Multi-year passenger/revenue/profit trend for an existing route, with YoY growth |
 | `rank_future_opportunities` | `SimulationEngine.compare()` across all routes | Ranks the existing network by projected profit for a future year/month |
-| `project_macro_indicators` | `simulation/macro_projections.py` (via `future_analysis.project_route_fundamentals`) | GDP/population/tourism/fuel/demand-multiplier projection for a destination's market |
+| `project_macro_indicators` | `pacific_wings/simulation/macro_projections.py` (via `future_analysis.project_route_fundamentals`) | GDP/population/tourism/fuel/demand-multiplier projection for a destination's market |
 | `analyze_long_term_market` | `simulation/future_analysis.multi_year_route_projection` | Full multi-year P&L trajectory for an existing route under macro-projected conditions |
 | `rank_network_long_term` | `simulation/future_analysis.network_future_analysis` | Multi-year network-wide portfolio ranking by cumulative projected profit |
 | `analyze_new_route` | `agents/open_route_agents.analyze_with_agents` | Full feasibility analysis (gravity model + 5-agent narrative) for ANY worldwide destination, not just existing routes |
@@ -114,7 +116,7 @@ model cites those figures exactly. For `analyze_new_route` specifically, the
 prompt instructs the model to structure its reply as a five-section report
 (`## Demand Agent` / `## Finance Agent` / `## Market Agent` / `## Risk Agent`
 / `## Strategy Agent`), mirroring the `/copilot` pipeline's five perspectives
-even though this is a single conversational call. `agents/chat_agent.py:chat()`
+even though this is a single conversational call. `pacific_wings/agents/chat_agent.py:chat()`
 returns the reply text plus a tool-call trace
 (`response.automatic_function_calling_history`) so the UI can render
 simulation deltas alongside the conversational answer. Like the other LLM

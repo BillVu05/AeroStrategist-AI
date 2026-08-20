@@ -1,13 +1,13 @@
-# Cost & Revenue Model Assumptions (Phases 4-5)
+# Cost & Revenue Model Assumptions
 
-This documents the calibration constants used by `simulation/cost.py` and
-`simulation/revenue.py`. As with the demand model, the goal is to be
+This documents the calibration constants used by `pacific_wings/simulation/cost.py` and
+`pacific_wings/simulation/revenue.py`. As with the demand model, the goal is to be
 explicit about what is real vs. calibrated-synthetic so results can be
 interpreted honestly.
 
 ## Cost model
 
-### Real anchor for non-fuel CASM (Phase 4, real-data rebuild)
+### Real anchor for non-fuel CASM
 
 `data/aircraft_specs.json` provides `casm_usd` (cost per available-seat-km,
 USD) per aircraft type - the *total* unit cost at the $1.74/gal baseline
@@ -18,7 +18,7 @@ clean public CASK figure found for any carrier relevant to this network
 explicitly a **group blend** across Qantas mainline + Jetstar and all
 stage lengths, not a per-aircraft or per-route figure.
 
-Converted to USD at the same ~0.65 USD/AUD rate used for Phase 2's
+Converted to USD at the same ~0.65 USD/AUD rate used for the
 competitor fare conversions: `6.22 AUD cents x 0.65 / 100 = $0.0404/ASK`.
 Each aircraft's prior non-fuel CASM was then scaled by a single factor
 (`0.0404 / network ASK-weighted average of the prior values = 0.7884`) so
@@ -113,7 +113,7 @@ total_cost       = fuel_casm * ASK_month + non_fuel_cost
 ```
 
 `weekly_frequency = 0` (candidate routes) uses a notional reference
-frequency of 3/week, matching `ml/features.py`.
+frequency of 3/week, matching `pacific_wings/ml/features.py`.
 
 ### Fuel price data
 
@@ -173,9 +173,9 @@ ancillary_revenue = total_passengers * ancillary_per_pax
 total_revenue     = ticket_revenue + ancillary_revenue
 ```
 
-## Market share model (Phase 6)
+## Market share model
 
-`simulation/market_share.py` implements a multinomial logit ("attraction")
+`pacific_wings/simulation/market_share.py` implements a multinomial logit ("attraction")
 model over Pacific Wings and the synthetic competitors in
 `data/processed/competitors.csv`:
 
@@ -199,23 +199,29 @@ own rating defaults to **4.1**. This is a relative, what-if-comparison
 tool, not a model fitted to real market-share data (which isn't publicly
 available at route level).
 
-## Simulation engine (Phase 7)
+## Simulation engine
 
-`simulation/engine.py`'s `SimulationEngine.run_scenario(...)` ties Phases
-3-6 together for a given route/month:
+`pacific_wings/simulation/engine.py`'s `SimulationEngine.run_scenario(...)`
+ties the market, share, revenue, cost and fleet models together for a given
+route/month:
 
 1. Apply scenario deltas to fare (`price_delta_pct`), frequency
    (`frequency_delta`), aircraft (`aircraft_type`), fuel price
    (`fuel_price_usd_per_gallon`), and Pacific Wings' rating (`rating_delta`).
-2. Forecast demand (Phase 3) using the scenario fare - demand depends on
-   market features and price, not on Pacific Wings' own capacity.
-3. Compute capacity from the scenario frequency/aircraft, and cap
-   `passengers_carried = min(predicted_demand, capacity)` - capacity becomes
-   the binding constraint when frequency is cut.
-4. Compute revenue (Phase 4), cost (Phase 5), and profit from
-   `passengers_carried`.
-5. Compute market share (Phase 6) from the scenario fare/frequency/rating.
+2. Forecast the **total route market**, then apply the explicit multipliers:
+   macro growth, fare elasticity, tourism, GDP shock.
+3. Compute **market share** from the scenario fare/frequency/rating and take
+   Pacific Wings' slice: `own_demand = market x share`.
+4. Cap what can be sold: `carried = min(own_demand, capacity x 0.88)`. The
+   remainder is reported as **spilled** demand.
+5. Compute revenue, cost and profit from `carried`.
+6. Check the schedule against the **fleet**: block hours required vs. tails
+   available.
 
-`SimulationEngine.compare(...)` runs both a no-deltas baseline and a
-scenario and returns the difference in profit, passengers carried, and
-market share. Exposed via `/what_if`.
+`SimulationEngine.compare(...)` runs a no-deltas baseline alongside the
+scenario and returns the difference in profit, passengers carried, spilled
+demand, market share, and fleet feasibility. Exposed via `/what_if`.
+
+Step 3 is the one that used to be missing: market share was computed on a line
+nothing consumed, so adding fourteen weekly flights moved modeled share from
+9.4% to 13.5% and carried passengers by exactly zero.

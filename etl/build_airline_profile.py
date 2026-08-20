@@ -14,11 +14,12 @@ Output: data/airline_profile.json
 """
 
 import json
-from pathlib import Path
 
 import pandas as pd
 
-ROOT = Path(__file__).resolve().parents[1]
+from pacific_wings import paths
+
+ROOT = paths.ROOT
 AIRCRAFT_SPECS_PATH = ROOT / "data" / "aircraft_specs.json"
 AIRPORTS_PATH = ROOT / "data" / "reference" / "airports.csv"
 MACRO_PATH = ROOT / "data" / "reference" / "macro_indicators.csv"

@@ -4,24 +4,32 @@ Pacific Wings route, driven by the real features in data/airline_profile.json
 (distance, destination population/tourism/GDP growth) plus seasonality and
 noise; and real-airline competitor data (see COMPETITORS below for sourcing).
 
-Pacific Wings' own demand (demand_observations.csv) generated here is a
-formula-driven baseline. For SIN/HND/AKL/DAD, etl/fetch_real_aviation_stats.py
-(Phase 3) overwrites the passengers/load_factor columns with real
-BITRE-derived figures after this script runs - SYD-MEL is domestic, has no
+The demand target is TOTAL ROUTE MARKET size (one-way-equivalent monthly
+passengers, all carriers) - not Pacific Wings' own slice. Pacific Wings'
+carried passengers are derived downstream by pacific_wings/simulation/engine.py as
+market x modeled share, capped by capacity; baking an assumed share and a
+capacity cap into the training label (as this pipeline used to) made the
+label a function of Pacific Wings' own fleet decisions, so the model learned
+the capacity ceiling instead of a demand curve.
+
+The anchors below are a formula-driven baseline. For SIN/HND/AKL/DAD,
+etl/fetch_real_aviation_stats.py (Phase 3) overwrites market_passengers with
+real BITRE figures after this script runs - SYD-MEL is domestic, has no
 downloaded real source, and is left on this formula.
 
 Outputs:
-  data/processed/demand_observations.csv  (route, year, month, passengers, avg_fare_usd, load_factor)
+  data/processed/demand_observations.csv  (route, year, month, market_passengers, avg_fare_usd)
   data/processed/competitors.csv          (route, competitor_name, weekly_frequency, avg_fare_usd, rating)
 """
 
 import json
-from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
-ROOT = Path(__file__).resolve().parents[1]
+from pacific_wings import paths
+
+ROOT = paths.ROOT
 PROFILE_PATH = ROOT / "data" / "airline_profile.json"
 DEMAND_OUTPUT_PATH = ROOT / "data" / "processed" / "demand_observations.csv"
 COMPETITORS_OUTPUT_PATH = ROOT / "data" / "processed" / "competitors.csv"
@@ -40,8 +48,21 @@ WEEKS_PER_MONTH = 4.345
 # frequency so a load factor / demand level can still be estimated.
 NOTIONAL_CANDIDATE_FREQUENCY = 3
 
-# Industry-typical long-run average load factor (IATA benchmark ~75-85%).
-BASE_LOAD_FACTOR = 0.80
+# One-way-equivalent monthly TOTAL MARKET size (all carriers) for each route,
+# at 2024 levels. SIN/HND/AKL/DAD are overwritten with the real BITRE
+# city-pair figures by fetch_real_aviation_stats.py and the values here are
+# only a pre-overwrite placeholder; MEL is the one route that keeps this
+# anchor, calibrated to the published Melbourne-Sydney total of ~9.2M
+# passengers/year in BOTH directions (BITRE domestic city-pair statistics,
+# FY2023-24) - halved to one-way-equivalent and divided by 12.
+ROUTE_MONTHLY_MARKET_ANCHOR = {
+    "SIN": 70_000,
+    "HND": 30_000,
+    "MEL": 385_000,   # 9.24M / 2 / 12
+    "AKL": 56_000,
+    "DAD": 1_700,
+}
+MARKET_ANCHOR_YEAR = 2024
 
 # Monthly seasonality multipliers (Jan..Dec). "leisure" peaks around AU
 # summer (Dec/Jan) and AU school holidays (Jul); "domestic" is flatter,
@@ -64,24 +85,19 @@ ROUTE_SEASONALITY = {
 # ~$100-180, trans-Tasman ~$150-280, AU-Asia long-haul ~$350-650); the
 # COMPETITORS fare multipliers below were likewise derived from real
 # spot-checked economy fares. Premium-cabin uplift is applied downstream by
-# simulation/revenue.py's cabin multipliers, not baked into this fare.
+# pacific_wings/simulation/revenue.py's cabin multipliers, not baked into this fare.
 FARE_BASE_USD = 60.0
 FARE_PER_KM_SHORT = 0.075   # applied up to 2000 km
 FARE_PER_KM_LONG = 0.045    # applied beyond 2000 km
 FARE_SHORT_HAUL_KM = 2000.0
 FARE_ANNUAL_INFLATION = 0.03
 
-# Demand index: scales the load factor up/down based on destination tourism
-# arrivals (larger inbound tourism market => easier to fill the plane).
-# tourism_arrivals is in raw headcount/year; normalize against a reference.
-TOURISM_REFERENCE = 10_000_000
-
 # Real competitors per route (name, real weekly frequency, fare multiplier
 # relative to Pacific Wings' own modeled avg fare, real Skytrax World Airline
 # Star Rating). Sourced June 2026:
 #   - Frequencies: flight-aggregator schedules (FlightConnections/FlightsFrom/
 #     Directflights) + BITRE international airline activity (data/raw/) for
-#     relative carrier scale - see PLAN.md/README.md for full citations.
+#     relative carrier scale - see README.md for full citations.
 #   - Fare multipliers: spot-checked one-way economy fares (Google
 #     Flights/Skyscanner/Kayak/Qantas/Travelocity, AUD converted at ~0.65
 #     USD/AUD where noted) divided by Pacific Wings' own modeled base fare for
@@ -124,8 +140,8 @@ def build_rows(profile: dict, rng: np.random.Generator) -> tuple[list[dict], lis
 
     Factored out of main() so etl/fetch_real_aviation_stats.py (Phase 3) can
     reuse the fare formula and competitor data, then overwrite the
-    passengers/load_factor columns with real BITRE-derived figures for the
-    routes real data is available for.
+    market_passengers column with real BITRE figures for the routes real data
+    is available for.
     """
     demand_rows = []
     competitor_rows = []
@@ -135,16 +151,7 @@ def build_rows(profile: dict, rng: np.random.Generator) -> tuple[list[dict], lis
         distance_km = route["distance_km"]
         market = route["market"]
 
-        weekly_frequency = route["weekly_frequency"] or NOTIONAL_CANDIDATE_FREQUENCY
-        seats_total = next(
-            ac["seats"]["total"]
-            for ac in profile["airline"]["fleet"]
-            if ac["type"] == route["assigned_aircraft"]
-        )
-        capacity_monthly = seats_total * weekly_frequency * WEEKS_PER_MONTH
-
-        tourism_factor = np.clip(market["tourism_arrivals"] / TOURISM_REFERENCE, 0.3, 1.5)
-        demand_index = 0.85 + 0.15 * tourism_factor  # ~0.895 to 1.075
+        market_anchor = ROUTE_MONTHLY_MARKET_ANCHOR[dest]
 
         seasonality = SEASONALITY[ROUTE_SEASONALITY[dest]]
 
@@ -167,10 +174,12 @@ def build_rows(profile: dict, rng: np.random.Generator) -> tuple[list[dict], lis
                 seasonal = seasonality[month - 1]
                 noise = rng.normal(1.0, 0.03)
 
-                load_factor = float(
-                    np.clip(BASE_LOAD_FACTOR * demand_index * seasonal * trend_factor * noise, 0.45, 0.98)
-                )
-                passengers = int(round(capacity_monthly * load_factor))
+                # Market size, indexed off the anchor year rather than grown
+                # from it, so the anchor stays the 2024 level it was sourced at.
+                anchor_trend = (1 + 0.3 * market["gdp_growth_pct"] / 100) ** (MARKET_ANCHOR_YEAR - MACRO_BASE_YEAR)
+                market_passengers = int(round(
+                    market_anchor * seasonal * (trend_factor / anchor_trend) * noise
+                ))
 
                 fare_noise = rng.normal(1.0, 0.04)
                 avg_fare_usd = round(base_fare * fare_inflation * fare_noise, 2)
@@ -181,9 +190,8 @@ def build_rows(profile: dict, rng: np.random.Generator) -> tuple[list[dict], lis
                         "destination": dest,
                         "year": year,
                         "month": month,
-                        "passengers": passengers,
+                        "market_passengers": market_passengers,
                         "avg_fare_usd": avg_fare_usd,
-                        "load_factor": round(load_factor, 4),
                     }
                 )
 

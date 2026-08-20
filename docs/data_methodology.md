@@ -27,7 +27,7 @@ Three tiers, used throughout:
 |---|---|---|---|
 | Airport coordinates, names | Real | [OurAirports](https://ourairports.com/data/) | `etl/fetch_airports.py` |
 | Route distances | Real | Great-circle (haversine) from the above | `etl/build_airline_profile.py` |
-| Route network (SYD-SIN/HND/MEL/AKL, candidate SYD-DAD) | Real-derived | Sydney is a real Pacific Wings HQ choice; SIN/HND/MEL/AKL are real Sydney routes flown by real carriers today | HND not NRT - no carrier flies Sydney-Narita today (Phase 1, 2026-06) |
+| Route network (SYD-SIN/HND/MEL/AKL, candidate SYD-DAD) | Real-derived | Sydney is a real Pacific Wings HQ choice; SIN/HND/MEL/AKL are real Sydney routes flown by real carriers today | HND not NRT - no carrier flies Sydney-Narita today |
 
 ## Macroeconomic & tourism data
 
@@ -56,44 +56,61 @@ Three tiers, used throughout:
 | Competitor fares | Real, single snapshot | Spot-checked one-way economy fares, June 2026 (Google Flights/Skyscanner/Kayak/Qantas/Travelocity) | A point-in-time observation, not a historical fare series (none exists for free at this granularity) |
 | SYD-DAD competitors | Real (absence) | BITRE city-pair data confirms zero real nonstop SYD-Da Nang service since a suppressed 3-month blip, Dec 2014-Apr 2015 | Modeled with zero competitors, deliberately |
 | Pacific Wings' own fare formula (flat fee + per-km rate) | Real-derived | Reproduces the spot-checked competitor fares above almost exactly when run on each route's real distance | The competitor fare *multipliers* were originally derived as `real_fare / this_formula's_output`, so the formula is real-anchored by construction, not just coincidentally close |
-| `agents/open_route_analyst.py`'s fare estimate for arbitrary new destinations | Real-derived | Same formula as above (Phase 4 fix - the prior hardcoded step table ran 60-105% above this real anchor at every distance band) | |
+| `pacific_wings/analysis/open_route.py`'s fare estimate for arbitrary new destinations | Real-derived | Same formula as above (fix - the prior hardcoded step table ran 60-105% above this real anchor at every distance band) | |
 
 ## Demand (`data/processed/demand_observations.csv`)
 
 | Route | Tier | Detail |
 |---|---|---|
-| SIN, HND, AKL | Real-derived | Total market = real BITRE Sydney-city monthly passenger counts (`bitre_international_citypairs.xlsx`), halved to a one-way-equivalent. Pacific Wings' own passengers = that real total x an assumed new-entrant market share (necessarily an assumption - Pacific Wings isn't real - reusing `agents/open_route_analyst.py`'s `_new_entrant_share` heuristic), capped at capacity x the real BITRE Australia-country seat utilisation rate (`bitre_international_flights_seats.xlsx`) so passengers never exceed physical capacity. `load_factor` is always `passengers / capacity`, so the two stay internally consistent |
-| DAD (candidate) | Real-derived, deliberately rough | Same mechanism, but the "total market" itself doesn't exist (no real DAD service) - estimated by scaling the real SYD-Ho Chi Minh City + SYD-Hanoi BITRE markets down by Da Nang's share of combined city population (~1.25M vs ~18.3M, 2024 metro-area estimates, Macrotrends) |
-| MEL | Synthetic (unchanged) | SYD-MEL is domestic; BITRE's free city-pair download is international-only and no real domestic source was downloaded for this rebuild (a deliberate scope decision, not an oversight) - left on the original formula-driven estimate (real distance/macro features + seasonality + noise, calibrated to published IATA benchmark ranges) |
+| SIN, HND, AKL | **Real** | `market_passengers` = real BITRE Sydney-city monthly passenger counts (`bitre_international_citypairs.xlsx`), halved to a one-way-equivalent. That is the whole column: a real observable, with no assumed share and no capacity cap applied to it. Pacific Wings' own passengers are derived at simulation time as market x modeled share, capped by capacity |
+| DAD (candidate) | Real-derived, deliberately rough | Same column, but the market itself doesn't exist (no real DAD service) - estimated by scaling the real SYD-Ho Chi Minh City + SYD-Hanoi BITRE markets down by Da Nang's share of combined city population (~1.25M vs ~18.3M, 2024 metro-area estimates, Macrotrends) |
+| MEL | Synthetic, anchored to a published total | SYD-MEL is domestic; BITRE's free city-pair download is international-only and no real domestic source was downloaded (a deliberate scope decision, not an oversight). Its market is anchored to the published ~9.2M passengers/year both directions for the Melbourne-Sydney city pair (BITRE domestic city-pair statistics, FY2023-24), halved to one-way-equivalent and shaped by the domestic seasonality profile |
 
-The 2022 trough visible in the real-derived routes (e.g. SIN load factor
-~35% in January 2022) is real: Australia's international border reopened
-in February 2022, so early-2022 traffic genuinely was that low. Real data
-brings real noise - this isn't model error.
+The 2022 trough visible in the real routes is genuine: Australia's
+international border reopened in February 2022, so early-2022 traffic really
+was that low. Real data brings real noise - this isn't model error. 2022 is
+excluded from fitting for exactly that reason: it is a reopening ramp, not the
+steady state the simulator forecasts.
 
-## Demand forecasting model (`ml/train_demand_model.py`)
+## Demand forecasting model (`pacific_wings/ml/train.py`)
 
-- **Headline metric**: time-based holdout, train on 2022-2023, test on
-  2024. Once the routes above became real-derived, this changed meaning:
-  it used to measure how well XGBoost recovers a known synthetic formula
-  (R2=0.984, MAPE=3.7%); it now measures genuine forecast skill against
-  real-world noise (R2=0.952, MAPE=15.3%) - a real, expected drop, not a
-  regression.
-- **5-fold cross-validation** (shuffled, ignores time order) gives a second,
-  independent read: R2 is stable (0.966 +/- 0.014), but MAPE is far less
-  stable (42% +/- 26%) than the single holdout suggests - almost certainly
-  because DAD's tiny passenger counts (as low as 15/month) blow up
-  percentage error whenever a fold under-represents that route. Reported
-  honestly rather than hidden; see `models/metrics.json`.
-- **Prediction intervals** on `/demand_forecast` (`predicted_passengers_low/
-  high`) are a residual-bootstrap-style band: the point forecast plus the
-  real holdout's 10th/90th percentile error, clamped to `[0, capacity]`.
+**Current figures: [`model_metrics.md`](model_metrics.md)**, regenerated by
+every training run. Numbers are deliberately not repeated in prose here.
+
+- **What is forecast**: the monthly TOTAL route market (one-way-equivalent,
+  all carriers) - a real observable. Pacific Wings' own passengers are derived
+  downstream as market x modeled share, capped by capacity. The target used to
+  be Pacific Wings' own slice, computed by multiplying the market by an ASSUMED
+  share and then capping it at Pacific Wings' own seat capacity. That made the
+  training label a function of the airline's own fleet decisions, so the model
+  learned the capacity ceiling instead of a demand curve - fare importance
+  0.001, competitor-count importance 0.000 - and no strategy lever could move
+  the forecast.
+- **Headline metric**: time-based holdout, train 2023, predict 2024. It is also
+  the selection criterion between candidate models.
+- **Naive baselines** are scored on the same holdout every run. The previous
+  pipeline reported R2=0.965 while losing to each route's prior-year mean.
+- **Leave-one-route-out CV** replaced a shuffled k-fold that leaked (adjacent
+  months of the same route on both sides of the fold boundary).
+- **The deployed model is chosen, not assumed.** XGBoost and a per-route
+  seasonal index compete each run. The seasonal index currently wins
+  (see the scoreboard); XGBoost stays in the repo as a live contender, and the
+  run that flips the choice will say so.
+- **Prediction intervals** on `/demand_forecast` are built from OUT-OF-FOLD
+  residuals: rolling-origin refits, so every row is scored by a model that
+  never saw it, under the deployed configuration. They previously came from
+  the 2023-only holdout model while a different, all-rows model was actually
+  deployed - so the published band carried a discarded model's per-route bias
+  (HND shipped a permanent +830 passenger correction belonging to a model no
+  longer in production). The band is applied to the MARKET forecast, which is
+  what was measured; Pacific Wings' band is that band times its share, capped
+  by what it can fly.
   Not a model-based interval (no quantile regression) - just the actual
   historical error distribution.
-- **Confidence score** (`ml/confidence.py`, every `confidence_pct` shown in
+- **Confidence score** (`pacific_wings/ml/confidence.py`, every `confidence_pct` shown in
   the frontend) replaces the fabricated "Confidence %" badges removed
   during the realism audit. Real-derived, combining three signals:
-  - *Bootstrap ensemble disagreement* - `ml/train_demand_model.py` also
+  - *Bootstrap ensemble disagreement* - `pacific_wings/ml/train.py` also
     trains 30 models, each on a resample-with-replacement of the training
     rows; the spread of their predictions on a given forecast is a real
     epistemic-uncertainty signal (how sensitive the answer is to exactly
@@ -109,13 +126,13 @@ brings real noise - this isn't model error.
   The three signals are combined with documented, illustrative weights
   (not fitted to any ground truth - no labeled "was this forecast right"
   dataset exists, since Pacific Wings isn't real) - same honesty caveat as
-  `simulation/market_share.py`'s betas. What's real is every input: the
+  `pacific_wings/simulation/market_share.py`'s betas. What's real is every input: the
   bootstrap spread, the historical residuals, and the training data's
   actual year/feature ranges. `confidence_notes` surfaces which specific
   factor (if any) is reducing the score, e.g. "Forecast year 2026 is 3
   year(s) outside the model's 2022-2023 training window."
 
-## Market share model (`simulation/market_share.py`)
+## Market share model (`pacific_wings/simulation/market_share.py`)
 
 | Field | Tier | Notes |
 |---|---|---|
@@ -123,23 +140,23 @@ brings real noise - this isn't model error.
 | Beta coefficients (price, frequency, rating) | Illustrative | No public route-level market-share dataset exists to fit against - chosen so each factor has a visible, non-dominant effect at this dataset's real fare/frequency/rating magnitudes |
 | Sanity check | Real cross-check, not a fit | Compared against one real benchmark (BITRE country-level AU-Singapore traffic share): this calibration puts Singapore Airlines at ~61% modeled share on SYD-SIN vs. its real ~60% reported share. One data point, used as a plausibility check, not a calibration target |
 
-## Monte Carlo scenario simulator (`simulation/monte_carlo.py`)
+## Monte Carlo scenario simulator (`pacific_wings/simulation/monte_carlo.py`)
 
 | Randomized input | Tier | Notes |
 |---|---|---|
 | Fuel price | Real-derived | Lognormal, sigma = the real log-return volatility of `fuel_prices.csv`'s 2019-2024 series (~0.67) - wide because that period spans the COVID collapse and the 2022 spike, not because the model invents drama. From only 6 annual points, the volatility estimate is itself uncertain |
 | GDP growth | Real-derived | Normal, std = the destination country's real 2010-2024 GDP growth standard deviation (`macro_indicators.csv`) - e.g. ~1.0pp for Australia vs. ~4.0pp for Singapore |
-| Competitor entry (probability + discount) | Illustrative | No public source for new-entrant timing probabilities exists - a documented 25% entry probability, triangular(5%, 12%, 25%) discount, centred on the same point assumption as `simulation/presets.py`'s `competitor_entry` preset |
+| Competitor entry (probability + discount) | Illustrative | No public source for new-entrant timing probabilities exists - a documented 25% entry probability, triangular(5%, 12%, 25%) discount, centred on the same point assumption as `pacific_wings/simulation/presets.py`'s `competitor_entry` preset |
 | Fare, frequency, aircraft, rating | N/A - controlled, not random | These are decisions Pacific Wings makes, held fixed per Monte Carlo run, exactly as in the deterministic `/what_if` |
 
-## Revenue model (`simulation/revenue.py`)
+## Revenue model (`pacific_wings/simulation/revenue.py`)
 
 | Field | Tier | Notes |
 |---|---|---|
 | Cabin fare multipliers (economy 1.0x, premium economy 1.6x, business 3.2x) | Illustrative | Within commonly-cited ranges for international fare structures, not fitted to Pacific-Wings-specific data |
 | Ancillary revenue ($25/passenger flat) | Illustrative | Within the commonly-cited $15-30/passenger range per IATA ancillary revenue reports |
 
-## Risk scores (`agents/open_route_analyst.py`)
+## Risk scores (`pacific_wings/analysis/open_route.py`)
 
 | Field | Tier | Notes |
 |---|---|---|
@@ -149,7 +166,7 @@ brings real noise - this isn't model error.
 
 - `docs/cost_assumptions.md` - full cost/revenue/market-share calibration
   math.
-- `PLAN.md` - phase-by-phase build history and the real-data rebuild status.
+- `project_history.md` - the original roadmap, kept as history. Superseded.
 - Code comments in `etl/generate_synthetic_demand.py`,
-  `etl/fetch_real_aviation_stats.py`, and `simulation/monte_carlo.py` -
+  `etl/fetch_real_aviation_stats.py`, and `pacific_wings/simulation/monte_carlo.py` -
   each real-data anchor is cited inline, next to the number it justifies.

@@ -11,12 +11,13 @@ defaulting to the docker-compose service.
 
 import json
 import os
-from pathlib import Path
 
 import pandas as pd
 from sqlalchemy import create_engine, text
 
-ROOT = Path(__file__).resolve().parents[1]
+from pacific_wings import paths
+
+ROOT = paths.ROOT
 
 DATABASE_URL = os.environ.get(
     "DATABASE_URL", "postgresql+psycopg2://airline:airline@localhost:5432/airline_sim"
@@ -97,7 +98,7 @@ def load_competitors(engine, route_ids: dict[tuple[str, str], int]) -> None:
 def load_demand_observations(engine, route_ids: dict[tuple[str, str], int]) -> None:
     df = pd.read_csv(ROOT / "data" / "processed" / "demand_observations.csv")
     df["route_id"] = df.apply(lambda r: route_ids[(r["origin"], r["destination"])], axis=1)
-    df = df[["route_id", "year", "month", "passengers", "avg_fare_usd", "load_factor"]]
+    df = df[["route_id", "year", "month", "market_passengers", "avg_fare_usd"]]
     df.to_sql("demand_observations", engine, if_exists="append", index=False)
     print(f"Loaded {len(df)} demand observation rows")
 

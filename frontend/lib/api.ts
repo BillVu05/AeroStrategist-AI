@@ -24,6 +24,15 @@ import type {
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000";
 
+// Sent only when the deployment sets one. The API is open by default, which
+// is right for a local demo; when API_TOKEN is set server-side this has to
+// match or every request comes back 401.
+const API_TOKEN = process.env.NEXT_PUBLIC_API_TOKEN;
+
+function authHeaders(extra: Record<string, string> = {}): Record<string, string> {
+  return API_TOKEN ? { ...extra, Authorization: `Bearer ${API_TOKEN}` } : extra;
+}
+
 async function getJSON<T>(path: string, params?: Record<string, unknown>): Promise<T> {
   const url = new URL(path, BASE_URL);
   if (params) {
@@ -34,7 +43,7 @@ async function getJSON<T>(path: string, params?: Record<string, unknown>): Promi
     }
   }
 
-  const res = await fetch(url.toString());
+  const res = await fetch(url.toString(), { headers: authHeaders() });
   if (!res.ok) {
     const body = await res.text();
     throw new Error(`API error ${res.status} for ${path}: ${body}`);
@@ -170,7 +179,7 @@ export function getNetworkFutureAnalysis(fromYear: number = 2025, toYear: number
 export async function postChat(messages: ChatMessage[]) {
   const res = await fetch(new URL("/chat", BASE_URL), {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: authHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify({ messages }),
   });
   if (!res.ok) {
@@ -193,7 +202,7 @@ export function getReport(id: string) {
 export async function saveReport(req: SaveReportRequest) {
   const res = await fetch(new URL("/reports", BASE_URL), {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: authHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify(req),
   });
   if (!res.ok) {
@@ -204,7 +213,10 @@ export async function saveReport(req: SaveReportRequest) {
 }
 
 export async function deleteReport(id: string) {
-  const res = await fetch(new URL(`/reports/${id}`, BASE_URL), { method: "DELETE" });
+  const res = await fetch(new URL(`/reports/${id}`, BASE_URL), {
+    method: "DELETE",
+    headers: authHeaders(),
+  });
   if (!res.ok) {
     const body = await res.text();
     throw new Error(`API error ${res.status} for /reports/${id}: ${body}`);
