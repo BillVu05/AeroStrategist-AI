@@ -29,7 +29,12 @@ router = APIRouter()
 @router.get("/analyze_route")
 def analyze_route_endpoint(
     destination: str = Query(..., description="IATA code or city name, e.g. 'LHR' or 'London'"),
-    weekly_frequency: int = Query(3, ge=WEEKLY_FREQUENCY_MIN, le=WEEKLY_FREQUENCY_MAX, description="Proposed weekly departures"),
+    weekly_frequency: int | None = Query(
+        None,
+        ge=WEEKLY_FREQUENCY_MIN,
+        le=WEEKLY_FREQUENCY_MAX,
+        description="Proposed weekly departures. Omit to have the schedule sized to the market.",
+    ),
     aircraft_type: str | None = Query(None, description="Force aircraft type (A320-200, A321neo, B787-9)"),
     avg_fare_usd: float | None = Query(None, ge=FARE_MIN, le=FARE_MAX, description="Assumed one-way economy fare (USD)"),
     fuel_price_usd_per_gallon: float | None = Query(None, ge=FUEL_PRICE_MIN, le=FUEL_PRICE_MAX, description="Scenario fuel price"),
@@ -54,7 +59,12 @@ def analyze_route_endpoint(
 @router.get("/analyze_route_agents", dependencies=LLM_GUARDS)
 def analyze_route_agents_endpoint(
     destination: str = Query(..., description="IATA code or city name, e.g. 'LHR' or 'London'"),
-    weekly_frequency: int = Query(3, ge=WEEKLY_FREQUENCY_MIN, le=WEEKLY_FREQUENCY_MAX, description="Proposed weekly departures"),
+    weekly_frequency: int | None = Query(
+        None,
+        ge=WEEKLY_FREQUENCY_MIN,
+        le=WEEKLY_FREQUENCY_MAX,
+        description="Proposed weekly departures. Omit to have the schedule sized to the market.",
+    ),
     aircraft_type: str | None = Query(None, description="Force aircraft type (A320-200, A321neo, B787-9)"),
     avg_fare_usd: float | None = Query(None, ge=FARE_MIN, le=FARE_MAX, description="Assumed one-way economy fare (USD)"),
     fuel_price_usd_per_gallon: float | None = Query(None, ge=FUEL_PRICE_MIN, le=FUEL_PRICE_MAX, description="Scenario fuel price"),
@@ -80,11 +90,11 @@ def analyze_route_agents_endpoint(
 @router.get("/compare_routes")
 def compare_routes_endpoint(
     destinations: str = Query(..., description="Comma-separated IATA codes or city names, e.g. 'LHR,DXB,JFK'"),
-    weekly_frequency: int = Query(
-        3,
+    weekly_frequency: int | None = Query(
+        None,
         ge=WEEKLY_FREQUENCY_MIN,
         le=WEEKLY_FREQUENCY_MAX,
-        description="Proposed weekly departures (applied to all)",
+        description="Proposed weekly departures (applied to all). Omit to size each route.",
     ),
     fuel_price_usd_per_gallon: float | None = Query(None, ge=FUEL_PRICE_MIN, le=FUEL_PRICE_MAX, description="Scenario fuel price"),
 ):

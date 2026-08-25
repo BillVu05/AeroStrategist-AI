@@ -166,7 +166,18 @@ def test_the_model_is_benchmarked_against_naive_baselines():
     metrics = json.loads(paths.METRICS.read_text())
     assert metrics["baselines"], "no baselines recorded"
     verdict = metrics["verdict_vs_baselines"]
-    assert verdict["status"] in {"beats_baseline", "ties_baseline"}, verdict
+    assert verdict["status"] in {
+        "beats_baseline",
+        "ties_baseline",
+        # One training year makes the seasonal index and same_month_last_year
+        # the same estimator, so the comparison is an identity rather than a
+        # result. Reporting that as "ties_baseline, improvement 1.3e-16" read
+        # like a close race a better model might win.
+        "identical_by_construction",
+    }, verdict
+    if verdict["status"] == "identical_by_construction":
+        assert verdict["degenerate"] is True, verdict
+        assert verdict["note"], verdict
 
 
 # ── the two engines must not contradict each other ────────────────────────────
@@ -324,15 +335,223 @@ def test_whole_schedule_fleet_check_catches_what_per_route_misses(engine):
     assert not fleet.check_schedule(together)["feasible"]
 
 
-def test_spill_is_reported_when_profit_cannot_move(engine):
-    """On a capacity-bound route most scenarios show a zero profit delta.
+def test_extra_demand_moves_profit_on_a_busy_route(engine):
+    """More demand must reach the P&L even when the route is already busy.
 
-    That is correct - the aeroplanes are full either way - but it reads as a
-    broken lever unless the thing that DID move is in the response.
+    This test used to assert the OPPOSITE - that the profit delta was exactly
+    zero - because passengers were clipped at `min(demand, capacity x 0.88)`,
+    so above the ceiling nothing a lever did could change what was carried.
+    Three of five routes sat there at baseline, which made "raise the fare" a
+    free win and "add a flight" a linear one. Demand now meets a spill curve
+    instead of a wall: carried rises with demand, more slowly as the aircraft
+    fills, and both the profit and the spill move.
     """
     comparison = engine.compare("SIN", YEAR, MONTH, tourism_arrivals_multiplier=1.2)
-    assert comparison["delta"]["profit_usd"] == 0
+    assert comparison["delta"]["profit_usd"] > 0, comparison["delta"]
+    assert comparison["delta"]["passengers_carried"] > 0, comparison["delta"]
     assert comparison["delta"]["spilled_passengers"] > 0, comparison["delta"]
+
+
+def test_carried_passengers_respond_to_fare_on_a_busy_route(engine):
+    """No flat region: every fare step must move passengers on a full route."""
+    carried = [
+        engine.run_scenario("MEL", YEAR, MONTH, price_delta_pct=d)["demand"]["passengers_carried"]
+        for d in (-0.1, 0.0, 0.1, 0.2)
+    ]
+    assert all(b < a for a, b in zip(carried, carried[1:])), carried
+
+
+def test_frequency_growth_has_diminishing_returns(engine):
+    """Each added flight must be worth less than the one before it.
+
+    A hard capacity clip made every added frequency worth exactly the same
+    $103,300, from three a week to twenty-one, so the model could never say
+    when growth stopped paying.
+    """
+    profits = [
+        engine.run_scenario("SIN", YEAR, MONTH, frequency_delta=d)["profit_usd"]
+        for d in (0, 2, 4, 6)
+    ]
+    gains = [b - a for a, b in zip(profits, profits[1:])]
+    assert all(g > 0 for g in gains), profits
+    assert all(b < a for a, b in zip(gains, gains[1:])), gains
+
+
+# ── the audit fixes, each with the pathology it replaced ─────────────────────
+
+def test_fuel_is_charged_on_block_time_not_cruise_time():
+    """Cruise burn over great-circle distance billed a 706 km SYD-MEL sector
+    2,045 kg against a real 3,300-3,800 kg, which is how a domestic trunk route
+    came to report a 60% operating margin."""
+    from pacific_wings.simulation.cost import CostModel, block_fuel_kg
+
+    model = CostModel()
+    mel = model.routes_by_destination["MEL"]
+    kg = block_fuel_kg(model.fleet_by_type["A320-200"], mel["distance_km"])
+    assert 3_000 <= kg <= 4_000, kg
+
+
+def test_scenario_year_sets_the_fuel_price():
+    """Every scenario, in every year, used to be costed at the last observed
+    price while the macro panel on the same screen showed a different one."""
+    from pacific_wings.simulation.cost import CostModel
+
+    model = CostModel()
+    near = model.monthly_cost("SIN", year=2024)["fuel_price_usd_per_gallon"]
+    far = model.monthly_cost("SIN", year=2031)["fuel_price_usd_per_gallon"]
+    assert near != far, (near, far)
+
+
+def test_tourism_is_anchored_on_observed_arrivals():
+    """Compounding the 2015-19 CAGR from a 2019 snapshot ran the boom straight
+    through the pandemic: Japan came out at 73.8M arrivals for 2026 against a
+    real 36.9M in 2024."""
+    from pacific_wings.simulation.macro_projections import project_tourism
+
+    japan = project_tourism("JPN", 31_881_000, 2019, 2024, 2026)
+    assert japan[2024] == 36_870_000, japan[2024]
+    assert japan[2026] < 55_000_000, japan[2026]
+
+
+def test_a_domestic_route_is_not_grown_by_inbound_tourism():
+    from pacific_wings.simulation.macro_projections import tourism_weight_for
+
+    assert tourism_weight_for("AUS") == 0.0
+    assert tourism_weight_for("JPN") > 0.0
+
+
+def test_confidence_is_reported_as_a_band():
+    """A one-decimal "66.5%" claimed a precision the weights cannot support."""
+    from pacific_wings.ml.confidence import ConfidenceModel
+
+    model = ConfidenceModel()
+    scored = model.score("SIN", model.train_year_max, 7, {"avg_fare_usd": 454.0}, 70_000)
+    assert scored["confidence_band"] in {"High", "Moderate", "Low", "Very low"}
+    assert scored["confidence_pct"] % 5 == 0, scored["confidence_pct"]
+    assert scored["confidence_basis"]
+
+
+def test_the_api_refuses_years_it_cannot_forecast():
+    """2050 used to be answerable, at an identical floored score for eighteen
+    straight years."""
+    from pacific_wings.api.config import YEAR_MAX
+    from pacific_wings.ml.confidence import ConfidenceModel
+
+    assert ConfidenceModel().max_useful_forecast_year() == YEAR_MAX
+
+
+def test_monte_carlo_agrees_with_the_deterministic_run(engine):
+    """A lognormal centred on the median put the sampled mean 12% below the
+    point estimate, and a $6.00 clamp piled 8% of trials into one bin."""
+    from pacific_wings.simulation.monte_carlo import run_monte_carlo
+
+    result = run_monte_carlo(engine, "SIN", YEAR, MONTH, n_simulations=400)
+    point = result["deterministic_profit_usd"]
+    spread = result["profit_usd"]["p90"] - result["profit_usd"]["p10"]
+    assert abs(result["profit_usd"]["mean"] - point) < 0.1 * spread, result["profit_usd"]
+
+
+def test_the_screener_sizes_frequency_to_the_market():
+    """Screening every candidate at a fixed 3x/week made market size cancel out
+    of `market x share`: Tokyo, Seoul and Honolulu all returned ~27,000
+    passengers and annual profit within 5% of each other."""
+    from pacific_wings.analysis.open_route import analyze_open_route
+
+    results = [analyze_open_route(d) for d in ("NRT", "ICN", "HNL", "DPS")]
+    profits = [r["financials"]["annual_profit_usd"] for r in results]
+    assert max(profits) - min(profits) > 0.25 * abs(max(profits, key=abs)), profits
+    for r in results:
+        assert r["operations"]["frequency_options"], r["operations"]
+        assert r["operations"]["frequency_basis"].startswith("sized")
+
+
+def test_the_screener_checks_the_fleet_not_just_the_range():
+    """Three candidates each fitted the spare 787 hours alone and needed 171 of
+    the 90 available between them; the comparison had no fleet column."""
+    from pacific_wings.analysis.open_route import compare_route_alternatives
+
+    compared = compare_route_alternatives(["HKG", "BKK", "POM", "NAN"])
+    joint = compared["combined_fleet_check"]
+    assert joint["shortlist"], compared
+    assert joint["feasible"] is False, joint
+    assert joint["shortfalls"], joint
+
+
+def test_candidate_share_is_published_with_its_sensitivity(engine):
+    """Share on an unserved route is set by one assumed connecting frequency,
+    and moved 41.5% -> 6.6% across the plausible range of it."""
+    share = engine.market_share_model.compute("DAD", own_price=562, own_frequency=3)
+    low, high = share["pacific_wings_share_range"]
+    assert low < share["pacific_wings_share"] < high, share
+    assert share["share_range_note"]
+
+
+def test_candidate_routes_are_totalled_separately():
+    """A decade of Da Nang losses used to be netted off the network headline
+    for a route the screener rates DO NOT PROCEED."""
+    from pacific_wings.simulation.future_analysis import network_future_analysis
+
+    result = network_future_analysis(2026, 2028)
+    assert result["active_network_totals"]["routes"], result
+    assert "DAD" in result["candidate_totals"]["routes"], result
+    assert "DAD" not in result["active_network_totals"]["routes"], result
+
+
+def test_the_projection_can_add_a_flight():
+    """Three routes reported a passenger CAGR of exactly 0.00% over a decade
+    while their markets grew 46-55%, because the schedule never changed."""
+    from pacific_wings.simulation.future_analysis import network_future_analysis
+
+    result = network_future_analysis(2026, 2031)
+    grew = [
+        r for r in result["routes"]
+        if r["status"] == "active"
+        and r["end_year_weekly_frequency"] > r["start_year_weekly_frequency"]
+    ]
+    assert grew, [
+        (r["destination"], r["start_year_weekly_frequency"], r["end_year_weekly_frequency"])
+        for r in result["routes"]
+    ]
+    for r in result["routes"]:
+        if r["status"] == "active":
+            assert r["passenger_cagr_pct"] != 0.0, r
+
+
+def test_a_failed_month_is_not_a_free_month():
+    """A month that raised used to be written as zero passengers, zero revenue
+    AND zero cost, deflating the year with nothing on screen to say so."""
+    from pacific_wings.simulation.future_analysis import multi_year_route_projection
+
+    year = multi_year_route_projection("SIN", 2026, 2026)["yearly"]["2026"]
+    assert year["months_priced"] == 12, year
+    assert year["incomplete"] is False, year
+    for month in year["monthly"]:
+        assert not month.get("failed"), month
+
+
+def test_no_lead_in_fare_is_recorded_as_an_average():
+    """Jetstar's SYD-MEL average fare was $27.10 - a spot-checked lead-in fare,
+    not a year's average."""
+    import csv
+
+    with open(paths.ROOT / "data" / "processed" / "competitors.csv", encoding="utf-8") as handle:
+        for row in csv.DictReader(handle):
+            assert float(row["avg_fare_usd"]) >= 50.0, row
+
+
+def test_the_cost_breakdown_says_it_is_indicative():
+    from pacific_wings.simulation.cost import CostModel
+
+    breakdown = CostModel().monthly_cost("SIN")["non_fuel_cost_breakdown_usd"]
+    assert "_note" in breakdown and "Indicative" in breakdown["_note"]
+
+
+def test_the_etl_can_be_installed_from_requirements():
+    """etl/fetch_real_aviation_stats.py imports openpyxl, which appeared in no
+    requirements file, so the pipeline behind every real figure in the product
+    could not be run from a clean checkout."""
+    requirements = (paths.ROOT / "requirements.txt").read_text(encoding="utf-8")
+    assert "openpyxl" in requirements
 
 
 def test_the_readme_test_count_is_true(request):

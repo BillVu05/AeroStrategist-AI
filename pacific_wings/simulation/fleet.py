@@ -27,17 +27,37 @@ useful answer to a growth scenario; refusing to price it is not.
 import json
 
 from pacific_wings import paths
+from pacific_wings.simulation.cost import block_hours
 
 ROOT = paths.ROOT
 
-# Taxi, climb and descent beyond cruise time, per sector. Matches
-# pacific_wings/analysis/open_route.py's BLOCK_TIME_OVERHEAD_H.
-BLOCK_TIME_OVERHEAD_H = 0.5
 DAYS_PER_WEEK = 7
+
+# Usable range as a fraction of the manufacturer's published still-air figure.
+# Published range assumes optimum payload in still air; a full cabin, a
+# headwind and reserves all eat into it, and there is no payload-range curve in
+# this model to trade one against the other. 0.90 is the derate that stands in
+# for all three - deliberately blunter than a real payload-range chart and
+# deliberately conservative. The screener applied a 0.95 buffer of its own
+# while airline_profile.json assigned Da Nang (7,183 km) to an A321neo, whose
+# 7,400 km book range does not survive either derate: the two halves of the
+# application disagreed about what could fly the route.
+USABLE_RANGE_FRACTION = 0.90
+
+
+def usable_range_km(aircraft: dict) -> float:
+    return aircraft["range_km"] * USABLE_RANGE_FRACTION
+
+
+def aircraft_in_range(aircraft: dict, distance_km: float) -> bool:
+    return distance_km <= usable_range_km(aircraft)
 
 
 def round_trip_block_hours(distance_km: float, cruise_speed_kmh: float) -> float:
-    return 2 * (distance_km / cruise_speed_kmh + BLOCK_TIME_OVERHEAD_H)
+    """Both legs. BLOCK_TIME_OVERHEAD_H lives in simulation/cost.py, which
+    charges fuel on the same block time this counts hours on - the two used to
+    keep separate copies and disagreed about how long a sector takes."""
+    return 2 * block_hours(distance_km, cruise_speed_kmh)
 
 
 class FleetModel:
@@ -50,10 +70,19 @@ class FleetModel:
         aircraft = self.fleet_by_type[aircraft_type]
         return aircraft.get("count", 0) * aircraft.get("max_daily_block_hours", 0.0) * DAYS_PER_WEEK
 
-    def weekly_hours_required(self, schedule: dict[str, tuple[str, int]]) -> dict[str, float]:
-        """schedule: {destination: (aircraft_type, weekly_frequency)}."""
+    def weekly_hours_required(
+        self,
+        schedule: dict[str, tuple[str, int]],
+        extra_distances: dict[str, float] | None = None,
+    ) -> dict[str, float]:
+        """schedule: {destination: (aircraft_type, weekly_frequency)}.
+
+        `extra_distances` carries destinations that are not in the profile, so
+        a proposed new route can be checked against the fleet without being
+        added to it first."""
         hours: dict[str, float] = {}
         distances = {r["destination"]: r["distance_km"] for r in self.routes}
+        distances.update(extra_distances or {})
         for destination, (aircraft_type, frequency) in schedule.items():
             if not frequency:
                 continue
@@ -69,14 +98,25 @@ class FleetModel:
             if r["weekly_frequency"]
         }
 
-    def check(self, destination: str, aircraft_type: str, weekly_frequency: int) -> dict:
+    def check(
+        self,
+        destination: str,
+        aircraft_type: str,
+        weekly_frequency: int,
+        distance_km: float | None = None,
+    ) -> dict:
         """Feasibility of running `destination` at `weekly_frequency`, with
         the rest of the network flying its current schedule."""
         schedule = self.current_schedule()
         schedule[destination] = (aircraft_type, weekly_frequency)
-        return self.check_schedule(schedule)
+        extra = {destination: distance_km} if distance_km is not None else None
+        return self.check_schedule(schedule, extra_distances=extra)
 
-    def check_schedule(self, schedule: dict[str, tuple[str, int]]) -> dict:
+    def check_schedule(
+        self,
+        schedule: dict[str, tuple[str, int]],
+        extra_distances: dict[str, float] | None = None,
+    ) -> dict:
         """Feasibility of a WHOLE schedule.
 
         `check` varies one route against today's network, which is the right
@@ -85,7 +125,7 @@ class FleetModel:
         block hours while every individual route check still passed, because
         each one assumed the others stayed put.
         """
-        required = self.weekly_hours_required(schedule)
+        required = self.weekly_hours_required(schedule, extra_distances)
 
         by_type = {}
         feasible = True
@@ -138,6 +178,14 @@ class FleetModel:
 
 if __name__ == "__main__":
     f = FleetModel()
+
+    # Every route in the profile must be flyable by the aircraft assigned to
+    # it, under the same derate the screener applies.
+    for r in f.routes:
+        ac = f.fleet_by_type[r["assigned_aircraft"]]
+        assert aircraft_in_range(ac, r["distance_km"]), (
+            r["destination"], r["assigned_aircraft"], r["distance_km"], usable_range_km(ac)
+        )
 
     # The network as flown today must fit the fleet, or the baseline every
     # scenario is compared against is itself impossible.

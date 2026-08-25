@@ -44,8 +44,9 @@ year used for the macro snapshot in `airline_profile.json`:
 
 ```
 fuel_price_usd_per_kg = usd_per_gallon / KG_PER_GALLON   (KG_PER_GALLON = 3.03)
-fuel_cost_per_hour    = cruise_fuel_burn_kg_per_hour * fuel_price_usd_per_kg
-ask_per_hour          = seats_total * cruise_speed_kmh
+block_hours           = distance_km / cruise_speed_kmh + BLOCK_TIME_OVERHEAD_H
+block_fuel_kg         = cruise_fuel_burn_kg_per_hour * block_hours * BLOCK_FUEL_RESERVE_FACTOR
+fuel_cost_per_departure = block_fuel_kg * fuel_price_usd_per_kg
 baseline_fuel_casm    = fuel_cost_per_hour / ask_per_hour
 non_fuel_casm         = casm_usd - baseline_fuel_casm
 ```
@@ -180,7 +181,7 @@ model over Pacific Wings and the synthetic competitors in
 `data/processed/competitors.csv`:
 
 ```
-utility_i = BETA_LN_PRICE * ln(price_i) + BETA_FREQUENCY * log1p(weekly_frequency_i) + BETA_RATING * rating_i
+utility_i = BETA_LN_FREQUENCY * ln(frequency_i) - BETA_LN_PRICE * ln(price_i) + BETA_RATING * rating_i - product_form_penalty_i
 share_i   = exp(utility_i) / sum_j(exp(utility_j))
 ```
 
@@ -212,7 +213,7 @@ route/month:
    macro growth, fare elasticity, tourism, GDP shock.
 3. Compute **market share** from the scenario fare/frequency/rating and take
    Pacific Wings' slice: `own_demand = market x share`.
-4. Cap what can be sold: `carried = min(own_demand, capacity x 0.88)`. The
+4. Apply the spill curve: `carried = expected_passengers_carried(own_demand, capacity)`. The
    remainder is reported as **spilled** demand.
 5. Compute revenue, cost and profit from `carried`.
 6. Check the schedule against the **fleet**: block hours required vs. tails

@@ -394,7 +394,7 @@ def rank_network_long_term(
 
 def analyze_new_route(
     destination: str,
-    weekly_frequency: int = 3,
+    weekly_frequency: int | None = None,
     aircraft_type: str | None = None,
     avg_fare_usd: float | None = None,
     fuel_price_usd_per_gallon: float | None = None,
@@ -427,7 +427,8 @@ def analyze_new_route(
     Args:
         destination: IATA code (e.g. "LHR", "JFK") or city name (e.g. "London",
             "Dubai", "Tokyo"). Works for any major airport worldwide.
-        weekly_frequency: Proposed weekly departures. Defaults to 3 (typical
+        weekly_frequency: Proposed weekly departures. Sized to the market when
+            omitted (typical
             launch frequency for a new long-haul route).
         aircraft_type: Force a specific aircraft ("A320-200", "A321neo",
             "B787-9"). Auto-selected from distance if omitted.
@@ -448,7 +449,7 @@ def analyze_new_route(
 
 def compare_new_routes(
     destinations: list[str],
-    weekly_frequency: int = 3,
+    weekly_frequency: int | None = None,
     fuel_price_usd_per_gallon: float | None = None,
 ) -> dict:
     """Compares multiple potential new destinations side-by-side and ranks them
@@ -461,7 +462,8 @@ def compare_new_routes(
     Args:
         destinations: List of 2-8 IATA codes or city names to compare (e.g.
             ["DXB", "DEL", "JFK"] or ["Dubai", "Delhi", "New York"]).
-        weekly_frequency: Proposed weekly departures applied to all routes.
+        weekly_frequency: Proposed weekly departures applied to all routes;
+            each route is sized to its own market when omitted.
             Defaults to 3.
         fuel_price_usd_per_gallon: Optional fuel price scenario (defaults to
             current reference price).

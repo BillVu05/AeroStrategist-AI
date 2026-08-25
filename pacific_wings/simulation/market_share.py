@@ -20,11 +20,12 @@ on proportional rather than absolute differences. Fares span $27 to $755
 across these routes and frequencies span 5 to 259 a week; a linear term in
 either would let the densest domestic trunk route swamp every other factor.
 
-BETA_LN_FREQUENCY = 1.0 is the meaningful choice: it makes share
-proportional to frequency share when price and rating are equal, which is
-the core empirical regularity QSI models are built around ("S-curve"
-effects mean the true exponent is often slightly above 1 on competitive
-routes; 1.0 is the conservative version of that claim).
+BETA_LN_FREQUENCY = 1.15 is the S-curve exponent: at exactly 1.0 share is
+proportional to frequency share, which is the core empirical regularity QSI
+models are built around, and the observed effect on competitive routes is
+slightly stronger than proportional. It sat at 1.0 while BETA_RATING carried
+the difference; halving BETA_RATING (below) moved that work here, where it is
+better evidenced.
 
 CALIBRATION. These are calibrated constants, not fitted ones - route-level
 market share is not public, so there is nothing to fit against. They were
@@ -48,9 +49,13 @@ from pacific_wings import paths
 
 ROOT = paths.ROOT
 
-BETA_LN_FREQUENCY = 1.0
+BETA_LN_FREQUENCY = 1.15
 BETA_LN_PRICE = 0.5
-BETA_RATING = 0.8
+# 0.8 made one star a 2.2x swing in utility - the strongest lever in the whole
+# model, driven by rounded public star ratings and Pacific Wings' own invented
+# 4.1. Halved: a star is now a 1.5x swing, which keeps rating meaningful
+# without letting a subjective, one-decimal input outweigh price and frequency.
+BETA_RATING = 0.4
 
 PACIFIC_WINGS_NAME = "Pacific Wings"
 PACIFIC_WINGS_RATING = 4.1
@@ -66,12 +71,35 @@ PACIFIC_WINGS_RATING = 4.1
 # market rather than all or none of it:
 #   - fare 15% below nonstop (the discount connections must offer)
 #   - abundant frequency (several viable hub itineraries a day)
-#   - a low service rating standing in for the layover, the missed-connection
-#     risk and the extra journey hours
+#   - an explicit utility penalty for the layover, the missed-connection risk,
+#     the baggage re-check and the extra journey hours
+#
+# That penalty used to be smuggled in as a low service rating, which conflated
+# two different things on one axis: halving BETA_RATING for its own good
+# reasons (it was the strongest lever in the model) silently made connecting
+# itineraries more attractive and cut candidate-route share by more than half.
+# Product form and service quality are now separate terms.
 CONNECTING_COMPETITOR_NAME = "Connecting itineraries (via hubs)"
 CONNECTING_FARE_RATIO = 0.85
-CONNECTING_WEEKLY_FREQUENCY = 28
-CONNECTING_RATING = 2.5
+CONNECTING_WEEKLY_FREQUENCY = 56
+CONNECTING_RATING = 3.5
+# Utility cost of breaking the journey, on the same scale as the terms above -
+# roughly the equivalent of losing four service-rating points. Calibrated so a
+# 3x weekly nonstop takes a mid-teens share of a market flown today only via
+# hubs: a material minority, which is what a new nonstop entrant actually wins.
+CONNECTING_UTILITY_PENALTY = 1.5
+
+# How wide the guess is. BETA_LN_FREQUENCY = 1.0 makes share proportional to
+# frequency share, so this one integer IS the answer on any unserved route:
+# Da Nang came back at 41.5% share on 14/week and 6.6% on 140/week, and every
+# candidate-route business case in the product moved with it. Sydney-Da Nang
+# connects via Singapore, Hong Kong, Bangkok, Kuala Lumpur, Seoul and Taipei,
+# so the shipped 28/week - four itineraries a day - was far too generous to
+# Pacific Wings; 56 is the point estimate now, and callers get the low/high
+# band alongside it rather than a bare number.
+#
+# Replace all three with per-route hub schedules when a source for them exists.
+CONNECTING_WEEKLY_FREQUENCY_RANGE = (14, 140)
 
 # A carrier with no departures is not in the choice set at all. Guarding this
 # explicitly rather than relying on ln(0) -> -inf keeps the zero-frequency
@@ -91,6 +119,7 @@ def connecting_alternative(nonstop_price: float) -> dict:
         "price": max(1.0, nonstop_price * CONNECTING_FARE_RATIO),
         "weekly_frequency": CONNECTING_WEEKLY_FREQUENCY,
         "rating": CONNECTING_RATING,
+        "utility_penalty": CONNECTING_UTILITY_PENALTY,
     }
 
 
@@ -98,11 +127,16 @@ class MarketShareModel:
     def __init__(self) -> None:
         self.competitors = pd.read_csv(ROOT / "data" / "processed" / "competitors.csv")
 
-    def _utility(self, price: float, weekly_frequency: float, rating: float) -> float:
+    def _utility(
+        self, price: float, weekly_frequency: float, rating: float, penalty: float = 0.0
+    ) -> float:
+        """`penalty` is a product-form cost, not a service-quality one - today
+        only the connecting itinerary carries it."""
         return (
             BETA_LN_FREQUENCY * math.log(max(weekly_frequency, MIN_FREQUENCY))
             - BETA_LN_PRICE * math.log(max(price, 1.0))
             + BETA_RATING * rating
+            - penalty
         )
 
     def carriers_on(
@@ -145,7 +179,31 @@ class MarketShareModel:
             }
         ] + self.carriers_on(destination, extra_competitors, own_price=own_price)
 
-        return self.shares_from_carriers(carriers)
+        result = self.shares_from_carriers(carriers)
+
+        # On a route contested only by connections, report how far the answer
+        # moves across the plausible range of that assumption (F-04) - a bare
+        # point estimate hides that it is the single most load-bearing number
+        # in any candidate-route case.
+        if any(c["name"] == CONNECTING_COMPETITOR_NAME for c in carriers):
+            band = []
+            for frequency in CONNECTING_WEEKLY_FREQUENCY_RANGE:
+                varied = [
+                    {**c, "weekly_frequency": frequency}
+                    if c["name"] == CONNECTING_COMPETITOR_NAME
+                    else c
+                    for c in carriers
+                ]
+                band.append(self.shares_from_carriers(varied)["pacific_wings_share"])
+            result["pacific_wings_share_range"] = [min(band), max(band)]
+            result["share_range_note"] = (
+                "No carrier flies this route nonstop, so share is set against an assumed "
+                f"{CONNECTING_WEEKLY_FREQUENCY}/week of connecting itineraries. The range spans "
+                f"{CONNECTING_WEEKLY_FREQUENCY_RANGE[0]}-{CONNECTING_WEEKLY_FREQUENCY_RANGE[1]}/week; "
+                "it is an assumption, not an observation."
+            )
+
+        return result
 
     def shares_from_carriers(self, carriers: list[dict]) -> dict:
         """Split the market across an explicit carrier list.
@@ -164,7 +222,12 @@ class MarketShareModel:
             return {"pacific_wings_share": 0.0, "shares_by_carrier": {}}
 
         exp_utilities = [
-            math.exp(self._utility(c["price"], c["weekly_frequency"], c["rating"])) for c in flying
+            math.exp(
+                self._utility(
+                    c["price"], c["weekly_frequency"], c["rating"], c.get("utility_penalty", 0.0)
+                )
+            )
+            for c in flying
         ]
         total = sum(exp_utilities)
         shares = {c["name"]: round(eu / total, 4) for c, eu in zip(flying, exp_utilities)}

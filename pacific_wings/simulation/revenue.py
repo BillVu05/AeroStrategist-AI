@@ -100,6 +100,14 @@ class RevenueModel:
             "destination": destination,
             "total_passengers": round(total_passengers, 1),
             "avg_fare_usd": avg_fare_usd,
+            # Route market size is real (BITRE). Fares are not, and every
+            # revenue figure below inherits that - say so where the numbers
+            # are read, not only in the methodology doc.
+            "fare_basis": (
+                "Modelled: economy fares come from a distance-based formula calibrated to "
+                "published benchmark ranges, not from observed ticket data. Cabin fares and "
+                "ancillary revenue are derived from it. Treat revenue as an estimate."
+            ),
             "blended_avg_fare_usd": round(ticket_revenue / total_passengers, 2)
             if total_passengers > 0
             else 0.0,

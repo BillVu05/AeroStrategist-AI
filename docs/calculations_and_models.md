@@ -45,7 +45,7 @@ market share model  ◄────────────┘   QSI multinomial
         ▼
 Pacific Wings demand
         │
-        ▼  capped at capacity × 0.88; remainder reported as spilled
+        ▼  through the spill curve; remainder reported as spilled
 passengers carried
         │
         ├──► revenue model  +  cost model  ──►  profit
@@ -306,8 +306,9 @@ To make fuel price a controllable what-if variable, CASM is split at a
 
 ```
 fuel_price_usd_per_kg = usd_per_gallon / 3.03                      # KG_PER_GALLON
-fuel_cost_per_hour    = cruise_fuel_burn_kg_per_hour * fuel_price_usd_per_kg
-ask_per_hour          = seats_total * cruise_speed_kmh
+block_hours           = distance_km / cruise_speed_kmh + 0.5      # taxi/climb/descent
+block_fuel_kg         = cruise_fuel_burn_kg_per_hour * block_hours * 1.05
+fuel_cost_per_departure = block_fuel_kg * fuel_price_usd_per_kg
 baseline_fuel_casm    = fuel_cost_per_hour / ask_per_hour
 non_fuel_casm         = casm_usd - baseline_fuel_casm               # held constant
 ```
@@ -354,7 +355,7 @@ utility_i = BETA_LN_FREQUENCY * ln(frequency_i)
           + BETA_RATING       * rating_i
 share_i   = exp(utility_i) / Σ_j exp(utility_j)
 
-BETA_LN_FREQUENCY = 1.0,  BETA_LN_PRICE = 0.5,  BETA_RATING = 0.8
+BETA_LN_FREQUENCY = 1.15,  BETA_LN_PRICE = 0.5,  BETA_RATING = 0.4
 ```
 
 `BETA_LN_FREQUENCY = 1.0` is the meaningful choice: it makes share
@@ -421,20 +422,35 @@ none of it.
    named constant with a citation, not a coefficient inside a fitted model.
 3. Compute **market share** (§4) from the scenario fare, frequency and rating,
    and take Pacific Wings' slice: `own_demand = market × share`.
-4. Compute **capacity**, and cap what can be sold:
-   `carried = min(own_demand, capacity × MAX_SELLABLE_LOAD_FACTOR)`.
+4. Compute **capacity**, and put demand through the **spill curve**:
+   `carried = expected_passengers_carried(own_demand, capacity)`.
    The remainder is reported as **spilled** — demand turned away.
 5. Compute **revenue**, **cost**, **profit** from `carried`.
 6. Check the schedule against the **fleet** (§8): block hours required versus
    tail counts available.
 
-**The 0.88 sellable ceiling is not decoration.** Real full-service carriers
-sustain 82–88%: the last seats on peak departures cannot be filled by off-peak
-demand that is still unserved, and demand does not arrive evenly across a
-month. Measured seat utilisation in the BITRE data for these corridors is
-Singapore 0.888, New Zealand 0.832, Japan 0.799, Vietnam 0.736. Without it,
-months where demand met capacity reported a 100% load factor and Monte Carlo
-runs piled up against exactly 1.000.
+**Spill is a curve, not a wall.** Demand does not arrive evenly across a
+month's departures: passengers spill from the full ones, and empty seats on the
+off-peak ones cannot absorb them. For departure-level demand distributed around
+mean `D` with standard deviation `CV·D` against capacity `C`:
+
+```
+z       = (C − D) / (CV·D)
+carried = D·Φ(z) − CV·D·φ(z) + C·(1 − Φ(z)),     CV = SPILL_DEMAND_CV = 0.45
+```
+
+capped at `C × 0.88` as a physical backstop. Real full-service carriers sustain
+82–88%; measured seat utilisation in the BITRE data for these corridors is
+Singapore 0.888, New Zealand 0.832, Japan 0.799, Vietnam 0.736.
+
+This replaced a hard `carried = min(own_demand, capacity × 0.88)`, and the
+difference is not cosmetic. Above the ceiling the clip made `carried` literally
+constant, which at baseline was true of three of the five routes: a fare rise
+moved revenue and nothing else, so profit was a **straight line in price** and
+the tool's implicit advice was always "charge more". Melbourne gained
+$230k/month from a 20% fare rise with zero passengers lost, and every added
+weekly frequency on Singapore was worth exactly $103,300 from three a week to
+twenty-one, with no diminishing returns to say when growth stopped paying.
 
 **Own-price elasticity comes out near −1.3** — the market term (−0.8) plus the
 share response — inside the −0.8 to −1.5 range the literature reports. The
@@ -527,7 +543,7 @@ controls" — sampling each from a distribution and running many
 
 | Input | Distribution | Parameters, and why |
 |---|---|---|
-| Fuel price | Lognormal | `sigma = 0.67`, the **real** log-return volatility of `fuel_prices.csv`'s 2019-2024 series — a period spanning the COVID collapse ($0.81/gal) and the 2022 spike ($3.48/gal), so the resulting bands are wide because fuel genuinely was that volatile, not because the model invents drama. Clamped to [$0.40, $6.00]/gal as a physical sanity backstop. |
+| Fuel price | Lognormal, centred on the **mean** | `sigma` is the log-return volatility of `fuel_prices.csv` with the COVID years excluded, clamped to the published long-run annual jet-fuel range [0.25, 0.35]. The raw six-point estimate was 0.67, which put p10-p90 at $0.97-$5.43 for a single scenario and pushed 7.6% of trials into the $6.00 clamp — a point mass of identical near-breakeven outcomes that read as a second mode and was most of the reported probability of loss. Centring on the mean rather than the median removes the 12% gap that used to sit between the sampled mean and the deterministic estimate. |
 | GDP growth | Normal | `std` = the destination country's **real** 2010-2024 GDP growth standard deviation (e.g. ~1.0pp Australia vs. ~4.0pp Singapore, a small trade-exposed economy that really has been more volatile). |
 | Competitor entry | Bernoulli(25%) × triangular(5%, 12%, 25%) discount | **Illustrative** — no public source for new-entrant timing probabilities exists; centred on the same point assumption as the `competitor_entry` what-if preset, but expressed as a probability instead of an on/off toggle. |
 | Demand-model error | Normal multiplier on the point forecast | `std` derived from the model's **own real holdout residual spread**, per route where available (`models/metrics.json`) — routes the model historically forecast poorly (e.g. DAD) get wider profit bands, not an arbitrary flat noise term. |
@@ -611,7 +627,9 @@ multi-year horizons (spikes and crashes, but doesn't escape a band).
 ```
 gdp_ratio    = gdp[year] / gdp[from_year]
 tourism_ratio = tourism[year] / tourism[from_year]
-demand_multiplier = 0.6 * (gdp_ratio ^ 1.5) + 0.4 * tourism_ratio
+income_term       = (gdp_per_capita_ratio ^ 1.5) * population_ratio
+demand_multiplier = (1 - w) * income_term + w * tourism_ratio
+                    w = 0.4 international, 0.0 domestic
 ```
 
 The **1.5 exponent** is IATA's published income elasticity of aviation

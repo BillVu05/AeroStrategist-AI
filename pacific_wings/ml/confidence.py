@@ -7,11 +7,21 @@ built from three real signals.
      N resamples-with-replacement of the observed rows. High spread means the
      answer depends heavily on exactly which months happened to be observed.
   2. HISTORICAL RELIABILITY (aleatoric). How wide this route's out-of-fold
-     residuals were (models/metrics.json's residual_quantiles_by_route),
-     relative to the prediction. Some routes are simply noisier.
+     residuals were, as a FRACTION of the actual value
+     (models/metrics.json's relative_residual_quantiles_by_route). Some routes
+     are simply noisier. This used to divide an ABSOLUTE passenger spread by
+     the prediction, which made the score a proxy for route size: Tokyo scored
+     25% and Singapore 66% for the same year and month, on the same relative
+     error, because Tokyo is the smaller market.
   3. EXTRAPOLATION DISTANCE. How far the request sits outside what was
      actually observed - years beyond the training window, and fares beyond
      the trained range.
+
+WHAT THE NUMBER IS. A heuristic score on a 0-100 scale, reported in bands and
+rounded to the nearest 5. It is NOT a probability and never was: the
+combination weights below are a documented choice, so a one-decimal "66.5%"
+claimed a precision that nothing underneath it supports. Read the band; the
+number ranks two forecasts against each other and nothing more.
 
 None of these are fitted to a labeled "this forecast was right" dataset -
 none exists, since Pacific Wings has no track record to grade against. The
@@ -28,6 +38,7 @@ more useful than one that answers the year 2100 at 85% confidence.
 """
 
 import json
+import math
 
 from pacific_wings import paths
 
@@ -51,12 +62,23 @@ FARE_OVERSHOOT_NOTE_THRESHOLD = 0.05
 CONFIDENCE_FLOOR = 5.0
 CONFIDENCE_CEILING = 95.0
 
+# Reported to the nearest step, in bands - see the module docstring.
+CONFIDENCE_ROUNDING = 5.0
+CONFIDENCE_BANDS = ((70.0, "High"), (45.0, "Moderate"), (20.0, "Low"), (0.0, "Very low"))
+
+
+def confidence_band(score: float) -> str:
+    for threshold, label in CONFIDENCE_BANDS:
+        if score >= threshold:
+            return label
+    return CONFIDENCE_BANDS[-1][1]
+
 
 class ConfidenceModel:
     def __init__(self) -> None:
         metrics = json.loads((MODELS_DIR / "metrics.json").read_text())
-        self.residual_quantiles_pooled = metrics["residual_quantiles"]
-        self.residual_quantiles_by_route = metrics["residual_quantiles_by_route"]
+        self.residual_quantiles_pooled = metrics["relative_residual_quantiles"]
+        self.residual_quantiles_by_route = metrics["relative_residual_quantiles_by_route"]
         self.feature_ranges = metrics["feature_ranges"]
         self.train_year_min = metrics["train_year_min"]
         self.train_year_max = metrics["train_year_max"]
@@ -66,6 +88,17 @@ class ConfidenceModel:
             json.loads(bootstrap_path.read_text()) if bootstrap_path.exists() else {}
         )
 
+    def max_useful_forecast_year(self) -> int:
+        """Last year worth answering for.
+
+        Past this the extrapolation term alone exhausts the whole scale, so
+        every route floors and every answer is the same answer. The API used to
+        accept requests to 2050 - eighteen years in which the model returned an
+        identical, meaningless 5.0 rather than declining to answer.
+        """
+        horizon = math.ceil((CONFIDENCE_CEILING - CONFIDENCE_FLOOR) / EXTRAPOLATION_PER_YEAR)
+        return self.train_year_max + horizon
+
     def _resampling_spread(self, destination: str, month: int) -> float:
         route = self.spread_by_route_month.get(destination)
         if not route:
@@ -74,8 +107,11 @@ class ConfidenceModel:
         return min(MAX_SPREAD_DEDUCTION, coefficient_of_variation * SPREAD_CV_SCALE)
 
     def _historical_reliability(self, destination: str, predicted: float) -> float:
+        """`predicted` is no longer used to scale the spread - the stored
+        quantiles are already relative - but stays in the signature because
+        callers pass the point prediction and the docstring documents it."""
         rq = self.residual_quantiles_by_route.get(destination, self.residual_quantiles_pooled)
-        relative_spread = abs(rq["p90"] - rq["p10"]) / max(predicted, 1.0)
+        relative_spread = abs(rq["p90"] - rq["p10"])
         return min(MAX_RELIABILITY_DEDUCTION, relative_spread * RELIABILITY_SCALE)
 
     def _extrapolation(self, year: int, features: dict) -> tuple[float, list[str]]:
@@ -135,6 +171,8 @@ class ConfidenceModel:
 
         confidence = 100.0 - spread_deduction - reliability_deduction - extrapolation_deduction
         confidence = max(CONFIDENCE_FLOOR, min(CONFIDENCE_CEILING, confidence))
+        confidence = round(confidence / CONFIDENCE_ROUNDING) * CONFIDENCE_ROUNDING
+        confidence = max(CONFIDENCE_FLOOR, confidence)
 
         if confidence <= CONFIDENCE_FLOOR:
             notes.append(
@@ -144,6 +182,11 @@ class ConfidenceModel:
 
         return {
             "confidence_pct": round(confidence, 1),
+            "confidence_band": confidence_band(confidence),
+            "confidence_basis": (
+                "Heuristic 0-100 score from resampling spread, historical relative error and "
+                "distance outside the observed data. Not a probability; reported in bands."
+            ),
             "confidence_breakdown": {
                 "resampling_spread_deduction": round(spread_deduction, 1),
                 "historical_reliability_deduction": round(reliability_deduction, 1),

@@ -29,7 +29,13 @@ const MONTH_SHORT = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct"
 // ─── tool-specific renderers ────────────────────────────────────────────────
 
 type SimBaseline = {
-  demand: { passengers_carried: number; load_factor: number; confidence_pct: number; confidence_notes: string[] };
+  demand: {
+    passengers_carried: number;
+    load_factor: number;
+    confidence_pct: number;
+    confidence_band: string;
+    confidence_notes: string[];
+  };
   revenue: { total_revenue_usd: number };
   cost: { fuel_cost_usd: number; total_cost_usd: number };
   profit_usd: number;
@@ -87,7 +93,9 @@ function SimulateRouteResult({ args, result }: { args: Record<string, unknown>; 
             </div>
             <div className="text-right">
               <div className="font-label text-[9px] uppercase tracking-widest text-on-surface-variant/60">Confidence</div>
-              <div className={`text-lg font-bold leading-none ${confidenceColor}`}>{confidencePct}%</div>
+              <div className={`text-lg font-bold leading-none ${confidenceColor}`}>
+                {baseline.demand.confidence_band}
+              </div>
             </div>
           </div>
 

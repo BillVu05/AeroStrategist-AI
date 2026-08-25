@@ -5,7 +5,8 @@ Projects GDP, population, tourism arrivals, and fuel prices forward using
 mathematical models calibrated on historical data from data/reference/:
   - GDP: exponential weighted trend + mean reversion toward long-run rate
   - Population: OLS linear trend extrapolation
-  - Tourism: pre-COVID structural CAGR compounded from 2019 baseline
+  - Tourism: latest observed arrivals, grown at a structural CAGR that
+    decays toward a long-run rate
   - Fuel price: discrete Ornstein-Uhlenbeck mean-reversion model
 
 All outputs are deterministic point estimates (no Monte Carlo). Use the
@@ -46,8 +47,31 @@ LONG_RUN_GDP_GROWTH_PCT: dict[str, float] = {
 }
 LONG_RUN_GDP_GROWTH_DEFAULT = 2.5
 
-# IATA income elasticity of aviation demand
+# IATA income elasticity of aviation demand. Applied to GDP PER CAPITA, not
+# to total GDP: total GDP already contains population growth, so putting a 1.5
+# elasticity on it counted population twice. Population enters separately and
+# linearly below, which is what it actually is - more people, more trips.
 AVIATION_INCOME_ELASTICITY = 1.5
+
+# Long-run tourism growth (UNWTO's ~3-4%/yr steady state) and how fast a
+# country's own structural CAGR decays toward it. Without the decay, Vietnam's
+# clamped 15%/yr compounded for the entire projection horizon.
+LONG_RUN_TOURISM_GROWTH = 0.04
+TOURISM_GROWTH_DECAY = 0.25
+
+# Weight on tourism in the composite demand multiplier. Zero for a domestic
+# route: SYD-MEL was being grown by Australia's INBOUND tourist arrivals, which
+# projected the world's fifth-busiest and most mature corridor at +7.5%/yr
+# while the observed data had it falling 9% year on year.
+TOURISM_BLEND_WEIGHT = 0.4
+
+# Pacific Wings' home market. A route to it is domestic.
+HOME_COUNTRY_ALPHA3 = "AUS"
+
+
+def tourism_weight_for(destination_country_alpha3: str) -> float:
+    """Weight to give inbound tourism when growing this route's market."""
+    return 0.0 if destination_country_alpha3 == HOME_COUNTRY_ALPHA3 else TOURISM_BLEND_WEIGHT
 
 # Long-run jet fuel equilibrium (USD/gallon) and O-U mean-reversion speed
 LONG_RUN_FUEL_PRICE_USD = 2.50
@@ -177,11 +201,23 @@ def project_tourism(
     to_year: int,
 ) -> dict[int, float]:
     """
-    Project annual tourism arrivals from a 2019 baseline value.
+    Project annual tourism arrivals forward from the latest OBSERVED year.
 
-    Structural CAGR is computed from the pre-COVID 2015-2019 period in macro
-    data. Projections compound the 2019 snapshot at that rate, meaning the
-    2019 value is the anchor (consistent with how the demand model uses it).
+    This used to compound the pre-COVID 2015-2019 CAGR from the 2019 snapshot
+    through every intervening year, which is to say straight through the
+    pandemic as though it had not happened. With arrivals data ending at 2020
+    it produced 73.8M Japanese arrivals for 2026 against a real 36.9M in 2024,
+    47.9M for Vietnam against 17.6M, and 28.4M for Singapore against 16.5M -
+    every published arrivals figure in the product was roughly double reality.
+
+    Two changes fix it. The anchor is the most recent year with an observed
+    figure (etl/fetch_worldbank.py now backfills 2021-2024), and the growth
+    rate decays from the structural CAGR toward a long-run rate instead of
+    compounding a boom forever - Vietnam's clamped 15%/yr was still running at
+    15% a decade out.
+
+    `snapshot_tourism`/`snapshot_year` remain the fallback anchor for a country
+    with no observed series at all.
 
     Returns: {year: arrivals_float}
     """
@@ -201,10 +237,29 @@ def project_tourism(
 
     structural_cagr = max(0.01, min(0.15, structural_cagr))
 
+    observed = country[country["tourism_arrivals"].notna()]
+    if not observed.empty:
+        anchor_year = int(observed.iloc[-1]["year"])
+        anchor_value = float(observed.iloc[-1]["tourism_arrivals"])
+    else:
+        anchor_year, anchor_value = snapshot_year, snapshot_tourism
+
+    observed_by_year = {
+        int(r.year): float(r.tourism_arrivals) for r in observed.itertuples()
+    }
+
     result: dict[int, float] = {}
     for year in range(from_year, to_year + 1):
-        n = year - snapshot_year
-        result[year] = round(snapshot_tourism * ((1 + structural_cagr) ** n))
+        if year in observed_by_year:
+            result[year] = round(observed_by_year[year])
+            continue
+        value = anchor_value
+        for n in range(1, year - anchor_year + 1):
+            rate = LONG_RUN_TOURISM_GROWTH + (structural_cagr - LONG_RUN_TOURISM_GROWTH) * math.exp(
+                -TOURISM_GROWTH_DECAY * (n - 1)
+            )
+            value *= 1 + rate
+        result[year] = round(value)
 
     return result
 
@@ -243,13 +298,18 @@ def project_market_size(
     snapshot_year: int,
     from_year: int,
     to_year: int,
+    tourism_weight: float = TOURISM_BLEND_WEIGHT,
 ) -> dict[int, dict]:
     """
     Composite market-size index for a bilateral route.
 
-    Combines GDP growth (scaled by aviation income elasticity) and tourism
-    growth into a demand multiplier relative to from_year:
-        multiplier = 0.6 * (gdp_ratio ^ elasticity) + 0.4 * tourism_ratio
+    Combines income growth and tourism growth into a demand multiplier
+    relative to from_year:
+        income     = (gdp_per_capita_ratio ^ elasticity) * population_ratio
+        multiplier = (1 - w) * income + w * tourism_ratio,  w = tourism_weight
+
+    `tourism_weight` is 0.0 for a domestic route, which has no inbound-tourism
+    driver at all.
 
     Returns per-year dict with gdp, population, tourism, fuel price, indices,
     and the composite demand_multiplier.
@@ -260,24 +320,30 @@ def project_market_size(
     fuel = project_fuel_price(from_year, to_year)
 
     base_gdp = gdp[from_year]["gdp_usd"]
+    base_pop = pop[from_year]
     base_tourism = tourism[from_year]
+    base_gdp_per_capita = base_gdp / base_pop if base_pop else 0.0
 
     result: dict[int, dict] = {}
     for year in range(from_year, to_year + 1):
         gdp_ratio = gdp[year]["gdp_usd"] / base_gdp if base_gdp > 0 else 1.0
+        pop_ratio = pop[year] / base_pop if base_pop else 1.0
+        gdp_per_capita = gdp[year]["gdp_usd"] / pop[year] if pop[year] else 0.0
+        income_ratio = gdp_per_capita / base_gdp_per_capita if base_gdp_per_capita > 0 else 1.0
         tour_ratio = tourism[year] / base_tourism if base_tourism > 0 else 1.0
 
-        demand_multiplier = (
-            0.6 * (gdp_ratio ** AVIATION_INCOME_ELASTICITY) + 0.4 * tour_ratio
-        )
+        income_term = (income_ratio ** AVIATION_INCOME_ELASTICITY) * pop_ratio
+        demand_multiplier = (1 - tourism_weight) * income_term + tourism_weight * tour_ratio
 
         result[year] = {
             "gdp_usd": gdp[year]["gdp_usd"],
             "gdp_growth_pct": gdp[year]["gdp_growth_pct"],
             "gdp_index": round(gdp_ratio, 4),
+            "gdp_per_capita_index": round(income_ratio, 4),
             "population": pop[year],
             "tourism_arrivals": tourism[year],
             "tourism_index": round(tour_ratio, 4),
+            "tourism_weight": tourism_weight,
             "fuel_price_usd_per_gallon": fuel[year],
             "demand_multiplier": round(demand_multiplier, 4),
             "data_source": gdp[year]["source"],

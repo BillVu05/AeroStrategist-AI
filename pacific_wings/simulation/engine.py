@@ -33,6 +33,7 @@ consequences were severe and none of them were visible from the code:
 at construction time, and is a pure function of its inputs.
 """
 
+import math
 
 from pacific_wings import paths
 from pacific_wings.ml.confidence import ConfidenceModel
@@ -40,7 +41,11 @@ from pacific_wings.ml.features import COUNTRY_ALPHA2_TO_ALPHA3, NOTIONAL_CANDIDA
 from pacific_wings.ml.market_model import MarketModel
 from pacific_wings.simulation.cost import WEEKS_PER_MONTH, CostModel
 from pacific_wings.simulation.fleet import FleetModel
-from pacific_wings.simulation.macro_projections import AVIATION_INCOME_ELASTICITY, project_market_size
+from pacific_wings.simulation.macro_projections import (
+    AVIATION_INCOME_ELASTICITY,
+    project_market_size,
+    tourism_weight_for,
+)
 from pacific_wings.simulation.market_share import PACIFIC_WINGS_NAME, PACIFIC_WINGS_RATING, MarketShareModel
 from pacific_wings.simulation.revenue import RevenueModel
 
@@ -60,14 +65,57 @@ MARKET_FARE_ELASTICITY = -0.8
 # A 20% tourism boom therefore lifts the market ~11%, not 20%.
 TOURISM_DEMAND_ELASTICITY = 0.6
 
-# Ceiling on the fraction of seats actually sold. Real full-service carriers
-# sustain 82-88%: the last seats on peak departures cannot be filled by the
-# off-peak demand that is still unserved, and demand does not arrive evenly
-# across a month. Measured seat utilisation in the BITRE data for these
-# corridors: Singapore 0.888, New Zealand 0.832, Japan 0.799, Vietnam 0.736.
-# Without this, months where demand met capacity reported a 100% load factor,
-# and Monte Carlo runs piled up against exactly 1.000.
+# Hard ceiling on the fraction of seats sold, as a physical backstop. Real
+# full-service carriers sustain 82-88%. Measured seat utilisation in the BITRE
+# data for these corridors: Singapore 0.888, New Zealand 0.832, Japan 0.799,
+# Vietnam 0.736. With the spill curve below in place this rarely binds.
 MAX_SELLABLE_LOAD_FACTOR = 0.88
+
+# Demand does not arrive evenly across a month's departures. Passengers spill
+# from the full ones, and empty seats on the off-peak ones cannot absorb them,
+# so a route never carries min(demand, capacity) - it carries less, and the
+# shortfall grows as demand approaches the capacity wall.
+#
+# Expected carried, for departure-level demand distributed around mean D with
+# standard deviation SPILL_DEMAND_CV x D, against capacity C:
+#
+#     E[min(x, C)] = D.PHI(z) - CV.D.phi(z) + C.(1 - PHI(z)),  z = (C - D) / (CV.D)
+#
+# This replaces a hard `min(demand, capacity x MAX_SELLABLE_LOAD_FACTOR)`. The
+# hard clip made passengers_carried literally CONSTANT wherever demand
+# exceeded capacity, which was three of five routes at baseline: a fare rise
+# moved revenue and nothing else, so profit was a straight line in price and
+# the tool's implicit advice was always "charge more, add flights". Melbourne
+# gained $230k/month from a 20% fare rise with zero passengers lost.
+#
+# CV 0.45 is departure-level demand variability within a month - peak/off-peak
+# and weekday/weekend spread. It reproduces roughly the load factors the hard
+# cap used to produce on today's schedule while leaving every lever able to
+# move the answer.
+SPILL_DEMAND_CV = 0.45
+
+
+def expected_passengers_carried(
+    demand: float, capacity: float, cv: float = SPILL_DEMAND_CV
+) -> float:
+    """Passengers carried once spill from full departures is accounted for.
+
+    Strictly increasing in `demand` and strictly below it, so every lever that
+    moves demand still moves the P&L - which a hard capacity clip does not.
+    """
+    if capacity <= 0 or demand <= 0:
+        return 0.0
+    sigma = cv * demand
+    z = (capacity - demand) / sigma
+    pdf = math.exp(-0.5 * z * z) / math.sqrt(2 * math.pi)
+    cdf = 0.5 * (1 + math.erf(z / math.sqrt(2)))
+    carried = demand * cdf - sigma * pdf + capacity * (1 - cdf)
+    return min(carried, capacity * MAX_SELLABLE_LOAD_FACTOR)
+
+
+# Spill below this share of demand is the ordinary unevenness of any schedule,
+# not a capacity problem worth flagging on screen.
+SPILL_MATERIALITY = 0.02
 
 
 class SimulationEngine:
@@ -103,6 +151,7 @@ class SimulationEngine:
                 int(route["market"]["snapshot_year"]),
                 self._growth_anchor_year,
                 year,
+                tourism_weight=tourism_weight_for(alpha3),
             )
             for y, m in market.items():
                 self._growth_cache[(destination, y)] = m["demand_multiplier"]
@@ -191,7 +240,7 @@ class SimulationEngine:
             destination, aircraft_type=scenario_aircraft, weekly_frequency=scenario_frequency
         )
         sellable = capacity_monthly * MAX_SELLABLE_LOAD_FACTOR
-        passengers_carried = min(own_demand, sellable)
+        passengers_carried = expected_passengers_carried(own_demand, capacity_monthly)
         spilled = max(0.0, own_demand - passengers_carried)
         load_factor = passengers_carried / capacity_monthly if capacity_monthly > 0 else 0.0
 
@@ -203,6 +252,7 @@ class SimulationEngine:
             fuel_price_usd_per_gallon=fuel_price_usd_per_gallon,
             weekly_frequency=scenario_frequency,
             aircraft_type=scenario_aircraft,
+            year=year,
         )
         profit_usd = round(revenue["total_revenue_usd"] - cost["total_cost_usd"], 2)
 
@@ -235,7 +285,7 @@ class SimulationEngine:
                 "passengers_carried": round(passengers_carried),
                 "spilled_passengers": round(spilled),
                 "load_factor": round(load_factor, 4),
-                "demand_constrained_by_capacity": spilled > 0,
+                "demand_constrained_by_capacity": spilled > SPILL_MATERIALITY * own_demand,
                 **confidence,
             },
             "revenue": revenue,
@@ -297,7 +347,7 @@ class SimulationEngine:
 
         capacity_monthly = seats * weekly_frequency * WEEKS_PER_MONTH
         sellable = capacity_monthly * MAX_SELLABLE_LOAD_FACTOR
-        passengers_carried = min(own_demand, sellable)
+        passengers_carried = expected_passengers_carried(own_demand, capacity_monthly)
         spilled = max(0.0, own_demand - passengers_carried)
         load_factor = passengers_carried / capacity_monthly if capacity_monthly > 0 else 0.0
 

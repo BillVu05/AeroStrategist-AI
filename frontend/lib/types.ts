@@ -32,6 +32,10 @@ export interface DemandForecastResponse {
   predicted_load_factor_low: number;
   predicted_load_factor_high: number;
   confidence_pct: number;
+  /** High | Moderate | Low | Very low. The score is a heuristic on a 0-100
+   *  scale, not a probability - show the band, not a decimal percentage. */
+  confidence_band: string;
+  confidence_basis: string;
   confidence_breakdown: ConfidenceBreakdown;
   confidence_notes: string[];
 }
@@ -109,6 +113,10 @@ export interface ScenarioDemand {
   load_factor: number;
   demand_constrained_by_capacity: boolean;
   confidence_pct: number;
+  /** High | Moderate | Low | Very low. The score is a heuristic on a 0-100
+   *  scale, not a probability - show the band, not a decimal percentage. */
+  confidence_band: string;
+  confidence_basis: string;
   confidence_breakdown: ConfidenceBreakdown;
   confidence_notes: string[];
 }
@@ -361,14 +369,26 @@ export interface NetworkFutureRoute {
   end_year_profit_usd: number;
   start_year_load_factor: number;
   end_year_load_factor: number;
+  start_year_weekly_frequency: number;
+  end_year_weekly_frequency: number;
+}
+
+export interface NetworkTotals {
+  projected_profit_usd: number;
+  projected_revenue_usd: number;
+  projected_passengers: number;
+  routes: string[];
 }
 
 export interface NetworkFutureAnalysisResponse {
   from_year: number;
   to_year: number;
-  network_total_projected_profit_usd: number;
-  network_total_projected_revenue_usd: number;
-  network_total_projected_passengers: number;
+  schedule_optimised: boolean;
+  /** Routes the airline flies today. Candidates are totalled separately so an
+   *  unlaunched route's losses cannot be netted off the headline. */
+  active_network_totals: NetworkTotals;
+  candidate_totals: NetworkTotals;
+  totals_note: string;
   routes: NetworkFutureRoute[];
 }
 

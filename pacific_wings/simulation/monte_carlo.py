@@ -50,6 +50,7 @@ import pandas as pd
 from pacific_wings import paths
 from pacific_wings.ml.features import COUNTRY_ALPHA2_TO_ALPHA3, NOTIONAL_CANDIDATE_FREQUENCY
 from pacific_wings.simulation.cost import latest_fuel_price
+from pacific_wings.simulation.macro_projections import project_gdp
 
 ROOT = paths.ROOT
 
@@ -59,11 +60,51 @@ MAX_SIMULATIONS = 1000
 DEFAULT_SEED = 42
 HISTOGRAM_BINS = 20
 
-# Real 2019-2024 log-return std of data/reference/fuel_prices.csv - see
-# module docstring. Clamp is a physical sanity backstop, not a statistical one.
-FUEL_PRICE_LOG_SIGMA = 0.67
+# Annual log-return volatility of jet fuel.
+#
+# Measured straight off data/reference/fuel_prices.csv's six annual points this
+# came to 0.67, and that number was doing real damage. A lognormal that wide
+# put p10-p90 at roughly $0.97-$5.43 for a single scenario, pushed 7.6% of
+# trials into the $6.00 clamp - a point mass of identical near-breakeven
+# outcomes that showed up on the histogram as a second mode and WAS most of the
+# reported probability of loss - and, because a lognormal's mean sits above its
+# median, dragged mean profit 12% below the deterministic estimate.
+#
+# Two of the five annual returns in that series are the COVID collapse and its
+# rebound. Excluding them (the same _COVID_YEARS exclusion the projection module
+# already applies) leaves 0.47, still inflated by the 2022 energy shock, so it
+# is capped at the top of the published long-run annual jet-fuel volatility
+# range. The clamp below is back to being a physical backstop that essentially
+# never binds.
+# Bounds are the published long-run annual jet-fuel volatility range. The
+# COVID exclusion leaves only two usable annual returns, which estimate 0.18 -
+# too few points to believe, and understating fuel risk is no better than
+# overstating it. Both ends of the clamp are therefore doing real work: the
+# ceiling holds the 2022 energy shock in check, the floor stops a two-point
+# sample from claiming fuel is calm.
+FUEL_PRICE_LOG_SIGMA_MAX = 0.35
+FUEL_PRICE_LOG_SIGMA_MIN = 0.25
 FUEL_PRICE_MIN_USD = 0.40
 FUEL_PRICE_MAX_USD = 6.00
+_COVID_YEARS = {2020, 2021}
+
+
+def _fuel_log_sigma() -> float:
+    """Log-return std of the reference series, excluding COVID-affected years."""
+    df = pd.read_csv(ROOT / "data" / "reference" / "fuel_prices.csv")
+    df["year"] = pd.to_datetime(df["price_date"]).dt.year
+    df = df.sort_values("year").reset_index(drop=True)
+    returns = [
+        np.log(df.usd_per_gallon[i] / df.usd_per_gallon[i - 1])
+        for i in range(1, len(df))
+        if df.year[i] not in _COVID_YEARS and df.year[i - 1] not in _COVID_YEARS
+    ]
+    if len(returns) < 2:
+        return FUEL_PRICE_LOG_SIGMA_MAX
+    return float(np.clip(np.std(returns, ddof=1), FUEL_PRICE_LOG_SIGMA_MIN, FUEL_PRICE_LOG_SIGMA_MAX))
+
+
+FUEL_PRICE_LOG_SIGMA = _fuel_log_sigma()
 
 # Illustrative, not real-data-fitted - see module docstring.
 COMPETITOR_ENTRY_PROBABILITY = 0.25
@@ -71,9 +112,14 @@ COMPETITOR_DISCOUNT_TRIANGULAR = (0.05, 0.12, 0.25)  # (low, mode, high)
 COMPETITOR_ENTRY_RATING = 3.9
 COMPETITOR_ENTRY_NAME = "Simulated New Entrant"
 
+# GDP-growth spread, with the COVID years excluded. Including them put
+# Singapore's standard deviation at 3.98pp around a 1.31pp centre, so more than
+# a third of trials drew a recession - a pandemic-scale shock sampled as if it
+# were the ordinary year-to-year variation of a scenario.
 _macro = pd.read_csv(ROOT / "data" / "reference" / "macro_indicators.csv")
-GDP_GROWTH_STD_BY_COUNTRY = _macro.groupby("country")["gdp_growth_pct"].std().to_dict()
-DEFAULT_GDP_GROWTH_STD = float(_macro["gdp_growth_pct"].std())
+_macro_structural = _macro[~_macro["year"].isin(_COVID_YEARS)]
+GDP_GROWTH_STD_BY_COUNTRY = _macro_structural.groupby("country")["gdp_growth_pct"].std().to_dict()
+DEFAULT_GDP_GROWTH_STD = float(_macro_structural["gdp_growth_pct"].std())
 
 _METRICS = json.loads((ROOT / "models" / "metrics.json").read_text())
 
@@ -136,13 +182,25 @@ def run_monte_carlo(
     rng = np.random.default_rng(seed)
 
     route = engine.ref.route(destination)
-    base_fuel_price = fuel_price_center if fuel_price_center is not None else latest_fuel_price()
-    base_gdp_growth = route["market"]["gdp_growth_pct"]
+    base_fuel_price = fuel_price_center if fuel_price_center is not None else latest_fuel_price(year)
     alpha3 = COUNTRY_ALPHA2_TO_ALPHA3.get(route["destination_country"])
     gdp_growth_std = GDP_GROWTH_STD_BY_COUNTRY.get(alpha3, DEFAULT_GDP_GROWTH_STD)
+    # Centre on the growth rate projected FOR THE SCENARIO YEAR. It used to be
+    # the route's 2019 macro snapshot, so /monte_carlo sampled around 1.31% for
+    # Singapore in 2026 while /macro_projection on the same screen said 3.12%.
+    base_gdp_growth = float(route["market"]["gdp_growth_pct"])
+    if alpha3:
+        base_gdp_growth = float(project_gdp(alpha3, year, year)[year]["gdp_growth_pct"])
 
+    # Centred on the MEAN, not the median: exp(N(log(c), s)) has mean
+    # c.exp(s^2/2), so sampling around log(c) quietly made every trial's
+    # expected fuel price higher than the deterministic run's.
     fuel_prices = np.clip(
-        rng.lognormal(mean=np.log(base_fuel_price), sigma=FUEL_PRICE_LOG_SIGMA, size=n_simulations),
+        rng.lognormal(
+            mean=np.log(base_fuel_price) - 0.5 * FUEL_PRICE_LOG_SIGMA**2,
+            sigma=FUEL_PRICE_LOG_SIGMA,
+            size=n_simulations,
+        ),
         FUEL_PRICE_MIN_USD,
         FUEL_PRICE_MAX_USD,
     )
@@ -192,6 +250,20 @@ def run_monte_carlo(
 
     counts, edges = np.histogram(profits, bins=HISTOGRAM_BINS)
 
+    # The deterministic answer, alongside the sampled one. A skewed input
+    # distribution pulls the Monte Carlo mean away from the point estimate, and
+    # a reader comparing two screens deserves to see both numbers rather than
+    # discover the gap.
+    deterministic_profit = float(
+        engine.run_scenario(
+            destination,
+            year,
+            month,
+            fuel_price_usd_per_gallon=base_fuel_price,
+            **scenario_kwargs,
+        )["profit_usd"]
+    )
+
     return {
         "destination": destination,
         "year": year,
@@ -204,13 +276,20 @@ def run_monte_carlo(
                 "center": round(base_fuel_price, 3),
                 "log_sigma": FUEL_PRICE_LOG_SIGMA,
                 "clamp_range": [FUEL_PRICE_MIN_USD, FUEL_PRICE_MAX_USD],
-                "source": "Real 2019-2024 log-return volatility, data/reference/fuel_prices.csv",
+                "source": (
+                    "Log-return volatility of data/reference/fuel_prices.csv excluding the "
+                    "COVID years, capped at the published long-run annual jet-fuel range"
+                ),
             },
             "gdp_growth_pct": {
                 "distribution": "normal",
                 "center": round(base_gdp_growth, 3),
                 "std": round(gdp_growth_std, 3),
-                "source": f"Real {alpha3 or 'pooled'} 2010-2024 GDP growth std, data/reference/macro_indicators.csv",
+                "source": (
+                    f"Centre: {alpha3 or 'route'} growth projected for {year}. Spread: real "
+                    f"{alpha3 or 'pooled'} 2010-2024 GDP growth std excluding COVID years, "
+                    "data/reference/macro_indicators.csv"
+                ),
             },
             "competitor_entry": {
                 "distribution": "bernoulli(p) x triangular discount",
@@ -225,6 +304,7 @@ def run_monte_carlo(
                 "source": f"Real {destination} holdout residual spread (p10-p90), models/metrics.json",
             },
         },
+        "deterministic_profit_usd": round(deterministic_profit, 2),
         "profit_usd": _summarize(profits),
         "passengers_carried": _summarize(passengers),
         "load_factor": _summarize(load_factors),

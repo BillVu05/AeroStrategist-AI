@@ -124,7 +124,7 @@ def strategy_summary(demand: dict, finance: dict, market: dict, risk: dict, verd
 def analyze_with_agents(
     destination: str,
     aircraft_type: str | None = None,
-    weekly_frequency: int = 3,
+    weekly_frequency: int | None = None,
     avg_fare_usd: float | None = None,
     fuel_price_usd_per_gallon: float | None = None,
     n_existing_carriers: int | None = None,

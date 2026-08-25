@@ -103,8 +103,17 @@ def _score(actual, predicted) -> dict:
 BASELINE_MARGIN = 0.02
 
 
-def _baseline_verdict(model_mape: float, baselines: dict) -> dict:
-    """Compare the deployed model against the best naive baseline, honestly."""
+def _baseline_verdict(model_mape: float, baselines: dict, n_train_years: int = 0) -> dict:
+    """Compare the deployed model against the best naive baseline, honestly.
+
+    With a single training year the seasonal index is not merely close to
+    `same_month_last_year`, it IS that forecaster: fit on one year, `base` is
+    that year's mean and `month_index[m]` is that year's month m divided by it,
+    so `base * month_index[m]` reproduces the observation exactly. The tie is
+    an algebraic identity, and the artifact used to report it as an empirical
+    result - "ties_baseline, relative_improvement 1.3e-16" reads like a close
+    race that a reader might expect a better model to win. It says so now.
+    """
     if not baselines:
         return {"status": "no_baselines"}
     best = min(baselines, key=lambda k: baselines[k]["mape"])
@@ -116,7 +125,7 @@ def _baseline_verdict(model_mape: float, baselines: dict) -> dict:
         status = "LOSES_TO_BASELINE"
     else:
         status = "ties_baseline"
-    return {
+    verdict = {
         "status": status,
         "best_baseline": best,
         "best_baseline_mape": best_mape,
@@ -124,6 +133,17 @@ def _baseline_verdict(model_mape: float, baselines: dict) -> dict:
         "relative_improvement": improvement,
         "margin_required": BASELINE_MARGIN,
     }
+    if n_train_years < 2:
+        verdict["status"] = "identical_by_construction"
+        verdict["degenerate"] = True
+        verdict["note"] = (
+            f"{n_train_years} training year(s): a seasonal index fitted on a single year "
+            "reproduces that year exactly, so it and same_month_last_year are the same "
+            "estimator. This comparison cannot discriminate and will not until a third "
+            "year of observations exists. The deployed artifact is a per-route level "
+            "with a per-month shape - not a model that beat anything."
+        )
+    return verdict
 
 
 def _predict_seasonal(params: dict, destinations, months) -> np.ndarray:
@@ -252,6 +272,33 @@ def out_of_fold_residuals(obs: pd.DataFrame, X: pd.DataFrame, kind: str) -> np.n
             fold_model.fit(X[~holdout], obs.loc[~holdout, TARGET])
             oof[holdout] = fold_model.predict(X[holdout])
     return obs[TARGET].to_numpy() - oof
+
+
+def per_route_relative_residual_quantiles(
+    destinations: pd.Series, residuals: np.ndarray, actuals: pd.Series
+) -> dict:
+    """The same spread expressed as a FRACTION of the actual value.
+
+    The absolute version below is what the confidence score used to read, and
+    it made confidence a proxy for route size: the same relative error scored
+    Tokyo at 25% confidence and Singapore at 66% purely because Tokyo is the
+    smaller market. Scale-free is what a reliability signal has to be.
+
+    Also worth reading honestly: with two observed years the rolling-origin
+    refit predicts each year from the other, so every route's quantiles come
+    out perfectly symmetric around zero - these are one year-over-year
+    difference, not a distribution of forecast errors. They widen into
+    something real the moment a third year of history exists.
+    """
+    by_route = {}
+    actual_values = actuals.to_numpy(dtype=float)
+    for dest in destinations.unique():
+        mask = (destinations == dest).to_numpy()
+        rel = residuals[mask] / np.where(actual_values[mask] == 0, np.nan, actual_values[mask])
+        rel = rel[~np.isnan(rel)]
+        if len(rel):
+            by_route[dest] = {f"p{q}": float(np.percentile(rel, q)) for q in (10, 25, 50, 75, 90)}
+    return by_route
 
 
 def per_route_residual_quantiles(destinations: pd.Series, residuals: np.ndarray) -> dict:
@@ -483,12 +530,21 @@ def main() -> None:
         # claim that must not be overstated here. With a single training year
         # the seasonal index IS same-month-last-year, so a tie is the expected
         # honest result until a third year of history exists.
-        "verdict_vs_baselines": _baseline_verdict(holdout["mape"], baselines),
+        "verdict_vs_baselines": _baseline_verdict(
+            holdout["mape"], baselines, n_train_years=int(obs[obs["year"] < TEST_YEAR]["year"].nunique())
+        ),
         "cross_validation": cross_validate(obs, X, kind),
         "residual_quantiles": {
             f"p{q}": float(np.percentile(finite, q)) for q in (10, 25, 50, 75, 90)
         },
         "residual_quantiles_by_route": per_route_residual_quantiles(obs["destination"], residuals),
+        "relative_residual_quantiles_by_route": per_route_relative_residual_quantiles(
+            obs["destination"], residuals, obs[TARGET]
+        ),
+        "relative_residual_quantiles": {
+            f"p{q}": float(np.nanpercentile(residuals / obs[TARGET].to_numpy(dtype=float), q))
+            for q in (10, 25, 50, 75, 90)
+        },
         "feature_importances": importances,
         "feature_ranges": compute_feature_ranges(X),
         "train_year_min": int(obs["year"].min()),

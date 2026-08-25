@@ -24,7 +24,7 @@ Every strategy lever reaches the P&L through one named, documented mechanism:
       = addressable market for the month
       x market share     pacific_wings/simulation/market_share.py (QSI multinomial logit)
       = Pacific Wings demand
-      capped at capacity x MAX_SELLABLE_LOAD_FACTOR (0.88)
+      through the spill curve (SPILL_DEMAND_CV 0.45, ceiling 0.88)
       = passengers carried, remainder reported as spilled
       -> revenue, cost, profit, and a fleet feasibility check
 ```
@@ -57,7 +57,7 @@ data/                   reference inputs and derived observations
 models/                 the fitted market model and its scoreboard
 docs/                   methodology; model_metrics.md is generated
 frontend/               Next.js UI
-tests/                   84 regression tests
+tests/                   102 regression tests
 db/                     reference schema for the ETL's optional Postgres target
 ```
 
@@ -254,7 +254,7 @@ simulation year so the total addressable market evolves over time.
 | Population | OLS linear trend fitted to the last 6 historical years, extrapolated forward. |
 | Tourism | Pre-COVID structural CAGR (2015–2019) compounded from the 2019 baseline. |
 | Fuel price | Discrete Ornstein-Uhlenbeck model: `P[t] = P[t-1] + 0.3 × ($2.50 − P[t-1])`. |
-| Market size | `0.6 × (GDP ratio ^ 1.5 elasticity) + 0.4 × tourism ratio`. The `demand_multiplier` shows how much larger the total addressable market becomes relative to the start year. |
+| Market size | `(1−w) × (GDP-per-capita ratio ^ 1.5 elasticity) × population ratio + w × tourism ratio`, with `w = 0.4` international and `0` domestic. The `demand_multiplier` shows how much larger the total addressable market becomes relative to the start year. |
 
 ### API
 
@@ -492,7 +492,7 @@ docs/
   agent_architecture.md          The LLM layer, and where the numbers come from
   project_history.md             Original roadmap, kept as history. Superseded.
 db/schema.sql                    Reference schema for the ETL's optional Postgres
-tests/                           84 regression tests, each naming a real defect
+tests/                           102 regression tests, each naming a real defect
 Dockerfile                       Backend image (API + fitted model, no database)
 docker-compose.yml               api + frontend; Postgres behind the `etl` profile
 frontend/
@@ -511,7 +511,7 @@ frontend/
 ## Tests
 
 ```bash
-pytest tests/          # 84 regression tests
+pytest tests/          # 102 regression tests
 ruff check .           # lint
 ```
 

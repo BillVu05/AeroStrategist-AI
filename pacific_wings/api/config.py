@@ -14,6 +14,8 @@ from collections import defaultdict
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 
+from pacific_wings.ml.confidence import ConfidenceModel
+
 app = FastAPI(
     title="Pacific Wings Strategy Simulator API",
     description=(
@@ -95,7 +97,10 @@ LLM_GUARDS = [Depends(require_token), Depends(rate_limit_llm)]
 #
 # FastAPI turns these into a 422 with a usable message for free, which is the
 # whole reason they belong on the parameter rather than in a hand-rolled check.
-YEAR_MIN, YEAR_MAX = 2015, 2050
+# The upper bound is the model's, not a round number: past it the confidence
+# score floors for every route and the answers stop differing (F-22).
+YEAR_MIN = 2015
+YEAR_MAX = ConfidenceModel().max_useful_forecast_year()
 PRICE_DELTA_MIN, PRICE_DELTA_MAX = -0.9, 5.0     # a fare cannot go negative
 FREQUENCY_DELTA_MIN, FREQUENCY_DELTA_MAX = -100, 100
 FUEL_PRICE_MIN, FUEL_PRICE_MAX = 0.1, 20.0       # USD/gallon, generous but finite

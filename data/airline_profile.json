@@ -62,7 +62,7 @@
       "status": "active",
       "weekly_frequency": 7,
       "assigned_aircraft": "A321neo",
-      "flight_duration_hours": 7.6,
+      "flight_duration_hours": 8.1,
       "market": {
         "snapshot_year": 2019,
         "gdp_usd": 376161998830.048,
@@ -81,7 +81,7 @@
       "status": "active",
       "weekly_frequency": 5,
       "assigned_aircraft": "B787-9",
-      "flight_duration_hours": 8.66,
+      "flight_duration_hours": 9.16,
       "market": {
         "snapshot_year": 2019,
         "gdp_usd": 5117993853016.51,
@@ -100,7 +100,7 @@
       "status": "active",
       "weekly_frequency": 14,
       "assigned_aircraft": "A320-200",
-      "flight_duration_hours": 0.85,
+      "flight_duration_hours": 1.35,
       "market": {
         "snapshot_year": 2019,
         "gdp_usd": 1398349602956.35,
@@ -119,7 +119,7 @@
       "status": "active",
       "weekly_frequency": 7,
       "assigned_aircraft": "A320-200",
-      "flight_duration_hours": 2.61,
+      "flight_duration_hours": 3.11,
       "market": {
         "snapshot_year": 2019,
         "gdp_usd": 213006341101.869,
@@ -137,8 +137,8 @@
       "distance_km": 7183.1,
       "status": "candidate",
       "weekly_frequency": 0,
-      "assigned_aircraft": "A321neo",
-      "flight_duration_hours": 8.68,
+      "assigned_aircraft": "B787-9",
+      "flight_duration_hours": 8.45,
       "market": {
         "snapshot_year": 2019,
         "gdp_usd": 334365270496.667,

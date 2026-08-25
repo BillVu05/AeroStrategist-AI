@@ -29,12 +29,13 @@ from pacific_wings.analysis.world_airports import (
 )
 from pacific_wings.ml.features import ReferenceData
 from pacific_wings.ml.market_model import MarketModel
-from pacific_wings.simulation.cost import CostModel, latest_fuel_price
+from pacific_wings.simulation.cost import BLOCK_TIME_OVERHEAD_H, CostModel, latest_fuel_price
 from pacific_wings.simulation.engine import (
     MARKET_FARE_ELASTICITY,
     MAX_SELLABLE_LOAD_FACTOR,
     SimulationEngine,
 )
+from pacific_wings.simulation.fleet import FleetModel, aircraft_in_range, usable_range_km
 from pacific_wings.simulation.market_share import (
     MarketShareModel,
     connecting_alternative,
@@ -48,7 +49,6 @@ WEEKS_PER_MONTH = 4.345
 # Fuel default comes from the same reference series the simulator uses, so a
 # screening run and a scenario run price fuel identically.
 BASELINE_FUEL_USD_PER_GAL = latest_fuel_price()
-BLOCK_TIME_OVERHEAD_H = 0.5        # taxi + climb/descent time beyond cruise, per sector
 
 # ─── aircraft specs (mirrors aircraft_specs.json) ────────────────────────────
 
@@ -57,14 +57,20 @@ AIRCRAFT: dict[str, dict] = {ac["type"]: ac for ac in _specs_raw}
 
 # Calibrated per-ASK/per-departure non-fuel cost split (pacific_wings/simulation/cost.py).
 _COST_MODEL = CostModel()
+_FLEET = FleetModel()
 
-# Aircraft selection by distance (with 5% reserve buffer: A320→5842km, A321neo→7030km, B787→13433km)
 def _select_aircraft(distance_km: float) -> str:
-    if distance_km <= 1800:
-        return "A320-200"
-    if distance_km <= 6800:   # safely under A321neo's 7400km range with 5% reserve
-        return "A321neo"
-    return "B787-9"
+    """Smallest type in the fleet whose USABLE range covers the sector.
+
+    Usable range is the shared derate in simulation/fleet.py, so the screener
+    and the airline profile can no longer disagree about what can fly a route
+    - the profile had Da Nang (7,183 km) on an A321neo that neither this
+    function nor the range check would have allowed.
+    """
+    for aircraft in sorted(AIRCRAFT.values(), key=lambda a: a["seats"]["total"]):
+        if aircraft_in_range(aircraft, distance_km):
+            return aircraft["type"]
+    return max(AIRCRAFT.values(), key=lambda a: a["range_km"])["type"]
 
 # ─── gravity model calibration (against known Pacific Wings routes) ───────────
 #
@@ -360,10 +366,81 @@ def _not_feasible(
 
 # ─── main analysis function ───────────────────────────────────────────────────
 
+# Frequency search bounds for the schedule sizer. A launch is at least daily-
+# minus-four and no more than double-daily; beyond that a screening estimate is
+# not the right tool.
+FREQUENCY_SEARCH_RANGE = range(3, 15)
+
+# A launch schedule that cannot fill this much of the aircraft is not a launch
+# schedule, however profitable the arithmetic says the first few flights are.
+MIN_VIABLE_LOAD_FACTOR = 0.55
+
+
+def _size_weekly_frequency(
+    iata: str,
+    distance_km: float,
+    aircraft_type: str,
+    market_pax_annual: float,
+    economy_fare: float,
+    reference_fare: float,
+    competitor_set: list[dict],
+    fuel_price_usd_per_gallon: float | None,
+) -> tuple[int, list[dict]]:
+    """Choose the launch frequency, rather than being handed one.
+
+    Every candidate used to be screened at a fixed 3x/week, and because the
+    logit's share shrinks in almost exact proportion as the market grows, that
+    made `market x share` a near-constant: Tokyo, Seoul and Honolulu all came
+    back at ~27,000 passengers a year, a 0.72-0.73 load factor and annual
+    profit within 5% of each other, across markets differing by 1.8x in size.
+    The screener could not rank destinations, which is the one thing it exists
+    to do. Sizing the schedule to the market is what puts market size back into
+    the answer.
+
+    Picks the most profitable frequency that both clears MIN_VIABLE_LOAD_FACTOR
+    and fits the fleet alongside today's network (F-03). Returns the choice and
+    the whole search, so the caller can show its working.
+    """
+    options = []
+    for frequency in FREQUENCY_SEARCH_RANGE:
+        sim = _ENGINE.run_open_route(
+            destination=iata,
+            market_passengers_annual=market_pax_annual,
+            distance_km=distance_km,
+            aircraft_type=aircraft_type,
+            weekly_frequency=frequency,
+            economy_fare_usd=economy_fare,
+            reference_fare_usd=reference_fare,
+            competitors=competitor_set,
+            fuel_price_usd_per_gallon=fuel_price_usd_per_gallon,
+        )
+        fleet = _FLEET.check(iata, aircraft_type, frequency, distance_km=distance_km)
+        options.append({
+            "weekly_frequency": frequency,
+            "load_factor": round(sim["load_factor"], 3),
+            "annual_profit_usd": round(sim["profit_usd"] * 12),
+            "fleet_feasible": fleet["feasible"],
+        })
+
+    viable = [
+        o for o in options
+        if o["fleet_feasible"] and o["load_factor"] >= MIN_VIABLE_LOAD_FACTOR
+    ]
+    if viable:
+        chosen = max(viable, key=lambda o: o["annual_profit_usd"])
+    else:
+        # Nothing clears both bars. Screen the smallest fleet-feasible
+        # schedule so the numbers describe the least-bad version of the route,
+        # and let the verdict say why it fails.
+        feasible = [o for o in options if o["fleet_feasible"]] or options
+        chosen = min(feasible, key=lambda o: o["weekly_frequency"])
+    return chosen["weekly_frequency"], options
+
+
 def analyze_open_route(
     destination: str,
     aircraft_type: str | None = None,
-    weekly_frequency: int = 3,
+    weekly_frequency: int | None = None,
     avg_fare_usd: float | None = None,
     fuel_price_usd_per_gallon: float | None = None,
     n_existing_carriers: int | None = None,
@@ -375,8 +452,8 @@ def analyze_open_route(
         destination: IATA code (e.g. "LHR") or city name (e.g. "London").
         aircraft_type: Force a specific aircraft ("A320-200", "A321neo",
             "B787-9"). Auto-selected from distance if omitted.
-        weekly_frequency: Proposed weekly departures. Defaults to 3
-            (typical launch frequency for a new long-haul route).
+        weekly_frequency: Proposed weekly departures. Sized to the market
+            when omitted - see `_size_weekly_frequency`.
         avg_fare_usd: Assumed one-way average fare. Auto-estimated from
             distance if omitted.
         fuel_price_usd_per_gallon: Scenario fuel price. Defaults to
@@ -415,11 +492,17 @@ def analyze_open_route(
         return {"error": f"Unknown aircraft type: {aircraft_type}"}
 
     range_km = aircraft["range_km"]
-    # Add 5% range buffer for reserves/alternate fuel
-    in_range = distance_km <= range_km * 0.95
+    # Shared derate for payload, wind and reserves (simulation/fleet.py).
+    in_range = aircraft_in_range(aircraft, distance_km)
+    usable_km = usable_range_km(aircraft)
     range_note = (
-        f"{aircraft_type} has range {range_km:,} km; route is {distance_km:,.0f} km — "
-        + ("within range." if in_range else f"EXCEEDS range by {distance_km - range_km:.0f} km. Aircraft upgrade required.")
+        f"{aircraft_type} has {range_km:,} km published range, {usable_km:,.0f} km usable after the "
+        f"payload/wind/reserve derate; route is {distance_km:,.0f} km — "
+        + (
+            "within range."
+            if in_range
+            else f"EXCEEDS usable range by {distance_km - usable_km:,.0f} km. Aircraft upgrade required."
+        )
     )
 
     if not in_range:
@@ -511,6 +594,20 @@ def analyze_open_route(
     # module used to carry its own copies of all of it, and the two answered
     # the same question differently: Da Nang screened as +$4.9M/yr PROCEED
     # here while the simulator called it -$9.9M/yr on the same route.
+    fuel_for_screen = fuel_price_usd_per_gallon or BASELINE_FUEL_USD_PER_GAL
+    if weekly_frequency is None:
+        weekly_frequency, frequency_options = _size_weekly_frequency(
+            iata, distance_km, aircraft_type, market_pax_annual,
+            economy_fare, reference_fare, competitor_set, fuel_for_screen,
+        )
+    else:
+        frequency_options = []
+
+    # F-03: the screener used to check aircraft RANGE and nothing else, so
+    # three candidates could each come back PROCEED on a 787 fleet with 90
+    # spare block hours a week between them and need 171.
+    fleet_check = _FLEET.check(iata, aircraft_type, weekly_frequency, distance_km=distance_km)
+
     sim = _ENGINE.run_open_route(
         destination=iata,
         market_passengers_annual=market_pax_annual,
@@ -520,7 +617,7 @@ def analyze_open_route(
         economy_fare_usd=economy_fare,
         reference_fare_usd=reference_fare,
         competitors=competitor_set,
-        fuel_price_usd_per_gallon=fuel_price_usd_per_gallon or BASELINE_FUEL_USD_PER_GAL,
+        fuel_price_usd_per_gallon=fuel_for_screen,
     )
 
     share_result = sim["market_share"]
@@ -576,11 +673,25 @@ def analyze_open_route(
     else:
         risk_financial = 0
 
+    risk_components = {
+        "geopolitical_risk": risk_geo,
+        "currency_risk": risk_fx,
+        "demand_risk": risk_demand,
+        "competition_risk": risk_competition,
+        "financial_risk": risk_financial,
+    }
     overall_risk = round(
         0.25 * risk_geo + 0.20 * risk_fx + 0.25 * risk_demand +
         0.15 * risk_competition + 0.15 * risk_financial,
         2
     )
+    # A weighted mean reported Tokyo at 0.7 ("low") while its competition
+    # component sat at 3, the top of the scale. A maximum-severity component
+    # does not average away: it floors the headline at "elevated" and is named.
+    worst_risk_name = max(risk_components, key=lambda k: risk_components[k])
+    worst_risk = risk_components[worst_risk_name]
+    if worst_risk >= 3:
+        overall_risk = max(overall_risk, 2.0)
 
     # ── 7. Multi-factor strategic score (0-100) ───────────────────────────────
     demand_score = min(100, max(0, round(
@@ -600,7 +711,7 @@ def analyze_open_route(
     composite_score = round(0.35 * demand_score + 0.40 * financial_score + 0.25 * strategic_score)
 
     # ── 8. Verdict and recommendation ────────────────────────────────────────
-    if not in_range:
+    if not in_range or not fleet_check["feasible"]:
         verdict = "NOT FEASIBLE"
     elif composite_score >= 65 and profit_annual > 0:
         verdict = "PROCEED"
@@ -614,12 +725,25 @@ def analyze_open_route(
     cons: list[str] = []
 
     # Demand pros/cons
+    # One sentence per band, with the band named. Two separate pro and con
+    # templates meant 842K read as "moderate" while 756K read as "small -
+    # limited scale": an 11% difference flipped the tone across a boundary the
+    # reader could not see.
     if market_pax_annual > 2_000_000:
-        pros.append(f"Large bilateral market: estimated {market_pax_annual/1e6:.1f}M total annual passengers (all carriers).")
+        pros.append(
+            f"Large bilateral market ({market_pax_annual/1e6:.1f}M total annual passengers, "
+            "all carriers; large = above 2M)."
+        )
     elif market_pax_annual > 800_000:
-        pros.append(f"Moderate bilateral market: ~{market_pax_annual/1e6:.1f}M total annual passengers (all carriers).")
+        pros.append(
+            f"Moderate bilateral market ({market_pax_annual/1e6:.1f}M total annual passengers, "
+            "all carriers; moderate = 0.8M-2M)."
+        )
     else:
-        cons.append(f"Small bilateral market: estimated {market_pax_annual/1000:.0f}K total annual passengers — limited scale.")
+        cons.append(
+            f"Small bilateral market ({market_pax_annual/1000:.0f}K total annual passengers, "
+            "all carriers; small = below 0.8M) — limited scale."
+        )
 
     if tourism_m >= 20:
         pros.append(f"High-tourism destination ({tourism_m:.0f}M international arrivals/year) supports leisure demand.")
@@ -665,6 +789,19 @@ def analyze_open_route(
         cons.append(f"Moderate competition ({n_existing_carriers} existing carriers) — Pacific Wings would enter as challenger.")
     else:
         cons.append(f"High competition ({n_existing_carriers} established carriers) — market share capture will be slow and costly.")
+
+    if not fleet_check["feasible"]:
+        cons.append(
+            "No aircraft available: " + "; ".join(fleet_check["shortfalls"])
+            + ". The schedule does not fit alongside the current network."
+        )
+    elif frequency_options:
+        blocked = [o for o in frequency_options if not o["fleet_feasible"]]
+        if blocked:
+            cons.append(
+                f"Fleet caps this route at {min(b['weekly_frequency'] for b in blocked) - 1}×/week "
+                "before another aircraft is needed."
+            )
 
     # Distance / operations
     if in_range:
@@ -721,6 +858,18 @@ def analyze_open_route(
             "range_note": range_note,
             "total_seats": total_seats,
             "weekly_frequency": weekly_frequency,
+            "frequency_basis": (
+                "sized to the market: most profitable schedule that clears a "
+                f"{MIN_VIABLE_LOAD_FACTOR:.0%} load factor and fits the current fleet"
+                if frequency_options
+                else "supplied by the caller"
+            ),
+            "frequency_options": frequency_options,
+            "fleet": {
+                "feasible": fleet_check["feasible"],
+                "shortfalls": fleet_check["shortfalls"],
+                "by_aircraft_type": fleet_check["by_aircraft_type"],
+            },
             "monthly_capacity_seats": round(capacity_annual / 12),
         },
         "demand_estimate": {
@@ -754,6 +903,8 @@ def analyze_open_route(
             "competition_risk": risk_competition,
             "financial_risk": risk_financial,
             "overall_risk_score": overall_risk,
+            "worst_component": worst_risk_name,
+            "worst_component_score": worst_risk,
             "risk_scale": "0=low · 1=moderate · 2=elevated · 3=high",
         },
         "scoring": {
@@ -771,7 +922,7 @@ def analyze_open_route(
 
 def compare_route_alternatives(
     destinations: list[str],
-    weekly_frequency: int = 3,
+    weekly_frequency: int | None = None,
     fuel_price_usd_per_gallon: float | None = None,
 ) -> dict:
     """
@@ -779,11 +930,17 @@ def compare_route_alternatives(
 
     Args:
         destinations: List of IATA codes or city names (2-8 destinations).
-        weekly_frequency: Proposed weekly departures applied to all routes.
+        weekly_frequency: Weekly departures applied to all routes. Each route
+            is sized to its own market when omitted.
         fuel_price_usd_per_gallon: Optional fuel price scenario.
 
     Returns:
-        Ranked list of routes with summary metrics for direct comparison.
+        Ranked list of routes with summary metrics for direct comparison, plus
+        a JOINT fleet check across everything that came back PROCEED. Each
+        route is screened against the fleet on its own, which is the wrong
+        question for a shortlist: three candidates each fitting the spare 787
+        hours individually needed 171 of the 90 available between them, and the
+        comparison table had no fleet column at all.
     """
     results = []
     errors = []
@@ -814,13 +971,36 @@ def compare_route_alternatives(
                 "verdict": analysis["verdict"],
                 "top_pro": analysis["pros"][0] if analysis["pros"] else "—",
                 "top_con": analysis["cons"][0] if analysis["cons"] else "—",
+                "weekly_frequency": analysis["operations"]["weekly_frequency"],
+                "fleet_feasible_alone": analysis["operations"]["fleet"]["feasible"],
             })
 
     results.sort(key=lambda r: r["composite_score"], reverse=True)
 
+    # Everything not ruled out, flown at once, against today's network.
+    shortlist = [r for r in results if r["verdict"].startswith("PROCEED")]
+    schedule = _FLEET.current_schedule()
+    distances = {}
+    for r in shortlist:
+        schedule[r["destination"]] = (r["aircraft_type"], r["weekly_frequency"])
+        distances[r["destination"]] = r["distance_km"]
+    joint = _FLEET.check_schedule(schedule, extra_distances=distances)
+
     return {
         "weekly_frequency": weekly_frequency,
         "routes_analysed": len(results),
+        "combined_fleet_check": {
+            "shortlist": [r["destination"] for r in shortlist],
+            "feasible": joint["feasible"] if shortlist else True,
+            "shortfalls": joint["shortfalls"] if shortlist else [],
+            "by_aircraft_type": joint["by_aircraft_type"] if shortlist else {},
+            "note": (
+                "Every route above is scored on its own. This is the answer to flying the "
+                "whole shortlist at once."
+                if shortlist
+                else "Nothing on the shortlist to fly."
+            ),
+        },
         "ranked_routes": results,
         "errors": errors,
     }

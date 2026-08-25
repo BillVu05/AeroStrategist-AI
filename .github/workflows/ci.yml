@@ -31,6 +31,7 @@ jobs:
       - name: Model self-checks
         run: |
           python -m pacific_wings.simulation.revenue
+          python -m pacific_wings.simulation.cost
           python -m pacific_wings.simulation.market_share
           python -m pacific_wings.simulation.fleet
           python -m pacific_wings.ml.confidence

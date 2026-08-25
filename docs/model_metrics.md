@@ -19,14 +19,14 @@ Deployed model: **seasonal_index**, selected by lowest MAPE on the
 | same_month_last_year | 10.58% | 5,520 | 0.996 | baseline |
 
 **vs the best baseline** (same_month_last_year):
-+0.0% MAPE -> `ties_baseline`
++0.0% MAPE -> `identical_by_construction`
 (a model must beat a naive forecaster by more than
 2% to claim a win; floating point makes an exact
 tie look like a victory by 1e-16).
 
 ## Leave-one-route-out cross-validation
 
-MAPE 2137.9% +/- 3932.8% across 5 folds.
+MAPE 2157.2% +/- 3969.5% across 5 folds.
 
 Error here is large by construction: with five routes the only features separating them are constants, so no model transfers to an unseen route. New destinations are served by the gravity model in pacific_wings/analysis/open_route.py, not by this one.
 

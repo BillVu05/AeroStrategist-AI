@@ -550,9 +550,9 @@ function LongRangeTab() {
               <span className="material-symbols-outlined text-tertiary">account_balance_wallet</span>
             </div>
             <p className="text-2xl font-bold text-on-surface">
-              {fmtUsd(network.network_total_projected_revenue_usd)}
+              {fmtUsd(network.active_network_totals.projected_revenue_usd)}
             </p>
-            <p className="mt-1 font-label text-[10px] text-on-surface-variant/60">Cumulative over horizon</p>
+            <p className="mt-1 font-label text-[10px] text-on-surface-variant/60">Active network, cumulative over horizon</p>
           </div>
           <div className="rounded-xl bg-white/[0.02] p-6">
             <div className="mb-2 flex items-start justify-between">
@@ -563,12 +563,12 @@ function LongRangeTab() {
             </div>
             <p
               className={`text-2xl font-bold ${
-                network.network_total_projected_profit_usd >= 0 ? "text-on-surface" : "text-error"
+                network.active_network_totals.projected_profit_usd >= 0 ? "text-on-surface" : "text-error"
               }`}
             >
-              {fmtUsd(network.network_total_projected_profit_usd)}
+              {fmtUsd(network.active_network_totals.projected_profit_usd)}
             </p>
-            <p className="mt-1 font-label text-[10px] text-on-surface-variant/60">Cumulative over horizon</p>
+            <p className="mt-1 font-label text-[10px] text-on-surface-variant/60">Active network, cumulative over horizon</p>
           </div>
           <div className="rounded-xl bg-white/[0.02] p-6">
             <div className="mb-2 flex items-start justify-between">
@@ -578,9 +578,9 @@ function LongRangeTab() {
               <span className="material-symbols-outlined text-tertiary">groups</span>
             </div>
             <p className="text-2xl font-bold text-on-surface">
-              {fmtPax(network.network_total_projected_passengers)}
+              {fmtPax(network.active_network_totals.projected_passengers)}
             </p>
-            <p className="mt-1 font-label text-[10px] text-on-surface-variant/60">Cumulative over horizon</p>
+            <p className="mt-1 font-label text-[10px] text-on-surface-variant/60">Active network, cumulative over horizon</p>
           </div>
         </div>
 

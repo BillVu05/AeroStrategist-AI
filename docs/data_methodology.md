@@ -34,7 +34,7 @@ Three tiers, used throughout:
 | Field | Tier | Source | Notes |
 |---|---|---|---|
 | GDP, GDP growth, population (2010-2024) | Real | [World Bank Open Data API](https://api.worldbank.org/v2) | `etl/fetch_worldbank.py` |
-| Tourism arrivals | Real, 2019 snapshot | World Bank | Frozen at 2019 (last pre-pandemic year with complete data for all 5 countries) and used as a static feature - post-2020 tourism data is largely missing/incomplete |
+| Tourism arrivals | Real, through 2024 | World Bank to 2020, then national tourism authorities (JNTO, Singapore Tourism Board, Vietnam NAT, ABS, Stats NZ) backfilled by `etl/fetch_worldbank.py` | The World Bank series stops at 2020. Projecting from the 2019 snapshot instead ran the 2015-19 boom straight through the pandemic and put Japan at 73.8M arrivals for 2026 against a real 36.9M in 2024. Projections now anchor on the latest observed year and decay toward a long-run rate |
 
 ## Aircraft & cost
 
@@ -144,7 +144,7 @@ every training run. Numbers are deliberately not repeated in prose here.
 
 | Randomized input | Tier | Notes |
 |---|---|---|
-| Fuel price | Real-derived | Lognormal, sigma = the real log-return volatility of `fuel_prices.csv`'s 2019-2024 series (~0.67) - wide because that period spans the COVID collapse and the 2022 spike, not because the model invents drama. From only 6 annual points, the volatility estimate is itself uncertain |
+| Fuel price | Real-derived | Lognormal centred on the mean, sigma = the log-return volatility of `fuel_prices.csv` excluding the COVID years, clamped to the published long-run annual jet-fuel range [0.25, 0.35]. The unfiltered six-point estimate was 0.67, wide enough that 7.6% of trials hit the $6.00 clamp and formed a spurious second mode |
 | GDP growth | Real-derived | Normal, std = the destination country's real 2010-2024 GDP growth standard deviation (`macro_indicators.csv`) - e.g. ~1.0pp for Australia vs. ~4.0pp for Singapore |
 | Competitor entry (probability + discount) | Illustrative | No public source for new-entrant timing probabilities exists - a documented 25% entry probability, triangular(5%, 12%, 25%) discount, centred on the same point assumption as `pacific_wings/simulation/presets.py`'s `competitor_entry` preset |
 | Fare, frequency, aircraft, rating | N/A - controlled, not random | These are decisions Pacific Wings makes, held fixed per Monte Carlo run, exactly as in the deterministic `/what_if` |

@@ -110,7 +110,7 @@ export default function CopilotReportView({ report }: { report: CopilotResponse 
                     : "text-error"
                 }`}
               >
-                {report.demand.baseline.confidence_pct}%
+                {report.demand.baseline.confidence_band}
               </span>
             </div>
             <div className="flex flex-col border-l border-white/10 pl-8">

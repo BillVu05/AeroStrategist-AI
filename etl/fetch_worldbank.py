@@ -33,6 +33,31 @@ INDICATORS = {
 DATE_RANGE = "2010:2024"
 OUTPUT_PATH = paths.MACRO_INDICATORS
 
+# The World Bank's ST.INT.ARVL series stops at 2020 for every country here, so
+# a fetch leaves 2021-2024 arrivals blank. Projecting tourism from the 2019
+# snapshot to fill that hole compounded the 2015-19 boom straight through the
+# pandemic: Japan came out at 73.8M arrivals for 2026 against a real 36.9M in
+# 2024, Vietnam at 47.9M against 17.6M. These are the national tourism
+# authorities' published figures (JNTO, Singapore Tourism Board, Vietnam
+# National Authority of Tourism, ABS short-term visitor arrivals, Stats NZ),
+# rounded to the nearest thousand, written in after the fetch.
+TOURISM_BACKFILL = {
+    "AUS": {2021:   245_000, 2022: 3_700_000, 2023:  6_600_000, 2024:  7_600_000},
+    "JPN": {2021:   246_000, 2022: 3_832_000, 2023: 25_066_000, 2024: 36_870_000},
+    "NZL": {2021:   100_000, 2022:   900_000, 2023:  2_900_000, 2024:  3_300_000},
+    "SGP": {2021:   330_000, 2022: 6_310_000, 2023: 13_610_000, 2024: 16_530_000},
+    "VNM": {2021:   157_000, 2022: 3_661_000, 2023: 12_600_000, 2024: 17_600_000},
+}
+
+
+def apply_tourism_backfill(df):
+    """Fill the arrivals the World Bank has not published yet."""
+    for country, years in TOURISM_BACKFILL.items():
+        for year, value in years.items():
+            mask = (df["country"] == country) & (df["year"] == year)
+            df.loc[mask & df["tourism_arrivals"].isna(), "tourism_arrivals"] = float(value)
+    return df
+
 
 def fetch_indicator(indicator_code: str) -> pd.DataFrame:
     url = WB_BASE_URL.format(countries=";".join(COUNTRIES), indicator=indicator_code)
@@ -66,6 +91,7 @@ def main() -> None:
         merged = df if merged is None else merged.merge(df, on=["country", "year"], how="outer")
 
     merged = merged.sort_values(["country", "year"]).reset_index(drop=True)
+    merged = apply_tourism_backfill(merged)
 
     OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
     merged.to_csv(OUTPUT_PATH, index=False)

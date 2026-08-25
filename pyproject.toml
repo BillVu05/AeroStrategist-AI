@@ -30,5 +30,9 @@ known-first-party = ["pacific_wings", "etl"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# The repo is not pip-installed in CI, and the `pytest` console script (unlike
+# `python -m pytest`) does not put the rootdir on sys.path - without this every
+# test module failed at `import pacific_wings`.
+pythonpath = ["."]
 addopts = "-q"
 filterwarnings = ["ignore::DeprecationWarning"]

@@ -103,12 +103,20 @@ FARE_ANNUAL_INFLATION = 0.03
 #     USD/AUD where noted) divided by Pacific Wings' own modeled base fare for
 #     that route - indicative dynamic fares observed June 2026, not a
 #     historical dataset (none exists for free at this granularity).
+#
+#     A spot check on a low-cost carrier returns its LEAD-IN fare, not its
+#     average, and the two are not close: Jetstar's SYD-MEL multiplier of 0.24
+#     put an annual average fare of $27.10 into the model. Low-cost carriers
+#     are now entered at published average-yield levels instead - roughly
+#     AU$105-110 for Jetstar on SYD-MEL and ~$280 for Scoot on SYD-SIN - which
+#     is what an average fare across a year actually looks like. The full-
+#     service multipliers are closer to their averages and are left as found.
 #   - Ratings: real Skytrax World Airline Star Rating (skytraxratings.com),
 #     1-5 scale, both mainline and low-cost certifications.
 COMPETITORS = {
     "SIN": [
         ("Singapore Airlines", 28, 1.60, 5),  # $647 fare / $403 base
-        ("Scoot", 14, 0.42, 4),  # $168 fare / $403 base (Skytrax 4-star low-cost)
+        ("Scoot", 14, 0.70, 4),  # ~$282 average yield / $403 base (Skytrax 4-star low-cost)
         ("Qantas", 19, 1.76, 4),  # $710 fare / $403 base
     ],
     "HND": [
@@ -119,7 +127,7 @@ COMPETITORS = {
     "MEL": [
         ("Qantas", 259, 1.22, 4),  # AU$212 -> $137.80 / $113 base
         ("Virgin Australia", 189, 0.74, 4),  # AU$129 -> $83.85 / $113 base
-        ("Jetstar", 126, 0.24, 3),  # AU$41 -> $26.65 / $113 base (Skytrax 3-star low-cost)
+        ("Jetstar", 126, 0.62, 3),  # AU$108 -> $70 average yield / $113 base (Skytrax 3-star low-cost)
     ],
     "AKL": [
         ("Qantas", 40, 0.90, 4),  # AU$299 -> $194.35 / $217 base

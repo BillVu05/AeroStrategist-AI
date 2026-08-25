@@ -45,18 +45,28 @@ XGBOOST = "xgboost"
 def fit_seasonal_index(obs, target: str) -> dict:
     """Per-route level + per-month shape.
 
-    The level is the route's mean market over the training years; the shape
-    is each month's mean relative to that level. Both are plain averages -
-    with two years of history, anything fancier is fitting noise.
+    The level is the route's mean market in the LATEST observed year; the shape
+    is each month's mean across all observed years, relative to the all-year
+    mean. Both are plain averages - with two years of history, anything fancier
+    is fitting noise.
+
+    The level used to be the mean across every observed year, which put the
+    forecast's starting point behind the data on any growing route. Tokyo grew
+    28% between the two observed years, so a 2026 forecast built on their
+    average and then grown by two years of macro landed exactly on the 2024
+    actual: two years of growth bought nothing.
     """
     params = {}
     for dest, group in obs.groupby("destination"):
-        base = float(group[target].mean())
-        if base <= 0:
+        shape_base = float(group[target].mean())
+        latest_year = int(group["year"].max())
+        base = float(group[group["year"] == latest_year][target].mean())
+        if base <= 0 or shape_base <= 0:
             continue
-        month_index = group.groupby("month")[target].mean() / base
+        month_index = group.groupby("month")[target].mean() / shape_base
         params[dest] = {
             "base": base,
+            "level_year": latest_year,
             # Months absent from the history fall back to a flat 1.0 rather
             # than to zero, which would silently erase a month of demand.
             "month_index": [float(month_index.get(m, 1.0)) for m in range(1, 13)],

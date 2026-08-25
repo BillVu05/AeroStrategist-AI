@@ -32,45 +32,47 @@
     }
   },
   "verdict_vs_baselines": {
-    "status": "ties_baseline",
+    "status": "identical_by_construction",
     "best_baseline": "same_month_last_year",
     "best_baseline_mape": 0.10580731743041777,
     "model_mape": 0.10580731743041775,
     "relative_improvement": 1.3116094562118475e-16,
-    "margin_required": 0.02
+    "margin_required": 0.02,
+    "degenerate": true,
+    "note": "1 training year(s): a seasonal index fitted on a single year reproduces that year exactly, so it and same_month_last_year are the same estimator. This comparison cannot discriminate and will not until a third year of observations exists. The deployed artifact is a per-route level with a per-month shape - not a model that beat anything."
   },
   "cross_validation": {
     "scheme": "leave-one-route-out (GroupKFold on destination)",
     "n_splits": 5,
     "held_out_route": {
       "SIN": {
-        "mae": 48258.32291666668,
-        "mape": 0.7025770987660854
+        "mae": 49367.645833333336,
+        "mape": 0.718628463940156
       },
       "MEL": {
-        "mae": 349415.2708333333,
-        "mape": 0.9014050340943035
+        "mae": 347905.4166666667,
+        "mape": 0.897501097381379
       },
       "HND": {
-        "mae": 102020.71875000001,
-        "mape": 4.063539304311887
+        "mae": 102205.27083333333,
+        "mape": 4.070816163305126
       },
       "DAD": {
-        "mae": 133318.63541666666,
-        "mape": 99.99640674212681
+        "mae": 134557.35416666666,
+        "mape": 100.92533076736201
       },
       "AKL": {
-        "mae": 65817.59375000001,
-        "mape": 1.2286898523029413
+        "mae": 66814.43750000001,
+        "mape": 1.2470236195521458
       }
     },
-    "interpretation": "Error here is large by construction: with five routes the only features separating them are constants, so no model transfers to an unseen route. New destinations are served by the gravity model in agents/open_route_analyst.py, not by this one.",
-    "mae_mean": 139766.10833333334,
-    "mae_std": 108867.91380356686,
-    "mape_mean": 21.378523606320407,
-    "mape_std": 39.32786080999807,
-    "r2_mean": -109053.37921458963,
-    "r2_std": 217629.18149420538
+    "interpretation": "Error here is large by construction: with five routes the only features separating them are constants, so no model transfers to an unseen route. New destinations are served by the gravity model in pacific_wings/analysis/open_route.py, not by this one.",
+    "mae_mean": 140170.025,
+    "mae_std": 107937.8820095331,
+    "mape_mean": 21.571860022308165,
+    "mape_std": 39.69545367828229,
+    "r2_mean": -111086.86225462057,
+    "r2_std": 221693.35893025543
   },
   "residual_quantiles": {
     "p10": -9813.4,
@@ -115,6 +117,50 @@
       "p75": 148.5,
       "p90": 328.59999999999985
     }
+  },
+  "relative_residual_quantiles_by_route": {
+    "SIN": {
+      "p10": -0.07356204258083736,
+      "p25": -0.038016053883468154,
+      "p50": -6.118152418791833e-07,
+      "p75": 0.03662137900106937,
+      "p90": 0.06849787897079404
+    },
+    "HND": {
+      "p10": -0.4846640230725082,
+      "p25": -0.38607550502536203,
+      "p50": -0.008849978302861758,
+      "p75": 0.27833258456053067,
+      "p90": 0.32643957307438476
+    },
+    "MEL": {
+      "p10": -0.04940549806815886,
+      "p25": -0.03093593714810366,
+      "p50": -4.21213662019841e-08,
+      "p75": 0.030005679310923815,
+      "p90": 0.047076482962300416
+    },
+    "AKL": {
+      "p10": -0.09557032153685178,
+      "p25": -0.03928191455291888,
+      "p50": -6.369213346260356e-07,
+      "p75": 0.037794386250569384,
+      "p90": 0.08703553519764788
+    },
+    "DAD": {
+      "p10": -0.27063310588384654,
+      "p25": -0.11312256325042185,
+      "p50": -3.3127501126335723e-06,
+      "p75": 0.10161238375832987,
+      "p90": 0.20921793163452998
+    }
+  },
+  "relative_residual_quantiles": {
+    "p10": -0.3270057063952327,
+    "p25": -0.051552789534178384,
+    "p50": -4.21213662019841e-08,
+    "p75": 0.049023197008786906,
+    "p90": 0.24642225156607772
   },
   "feature_importances": {},
   "feature_ranges": {
