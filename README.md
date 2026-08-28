@@ -57,7 +57,7 @@ data/                   reference inputs and derived observations
 models/                 the fitted market model and its scoreboard
 docs/                   methodology; model_metrics.md is generated
 frontend/               Next.js UI
-tests/                   102 regression tests
+tests/                   120 regression tests
 db/                     reference schema for the ETL's optional Postgres target
 ```
 
@@ -320,7 +320,7 @@ agents/
 
 ## AI agents & copilot
 
-`/copilot` runs a LangGraph pipeline (`pacific_wings/agents/graph.py`) of five agents:
+`/copilot` runs a five-agent pipeline (`pacific_wings/agents/copilot.py`):
 
 ```
 simulation -> demand -> finance -> market -> risk -> strategy
@@ -333,10 +333,15 @@ narrate those numbers plus real macro/tourism data and calibrated-synthetic
 competitor data - see `docs/agent_architecture.md` for the full methodology.
 
 ```bash
-curl "http://127.0.0.1:8000/copilot?destination=SIN&year=2025&month=7&price_delta_pct=-0.1"
+curl -X POST "http://127.0.0.1:8000/copilot" -H "Content-Type: application/json" \
+  -d '{"destination": "SIN", "year": 2025, "month": 7, "price_delta_pct": -0.1}'
 ```
 
-Same scenario params as `/what_if`. Requires `GEMINI_API_KEY` (free, no
+Same scenario params as `/what_if`, plus two optional steering fields used by
+the Copilot tab's deep-dive button: `question` (the executive's own wording)
+and `evidence` (the chat answer already on screen, which the agents are told
+to go deeper than). Neither changes a figure. It is a POST because `evidence`
+is a whole chat reply. Requires `GEMINI_API_KEY` (free, no
 billing - get one at https://aistudio.google.com/apikey) for the
 market/risk/strategy commentary; without it, those sections return
 `"available": false` with a notice while `scenario`/`demand`/`finance`
@@ -466,7 +471,6 @@ pacific_wings/                   One importable package. No sys.path manipulatio
     world_airports.py            Global airport database + per-country macro
   agents/                        LLM narration only; no agent produces a number
     llm_client.py                Gemini client, degrades to a notice without a key
-    graph.py                     LangGraph wiring the five report agents
     chat_agent.py                Conversational copilot, 12 function-calling tools
     copilot.py                   Report pipeline orchestration
     {demand,finance,market,risk,strategy}_agent.py
@@ -492,7 +496,7 @@ docs/
   agent_architecture.md          The LLM layer, and where the numbers come from
   project_history.md             Original roadmap, kept as history. Superseded.
 db/schema.sql                    Reference schema for the ETL's optional Postgres
-tests/                           102 regression tests, each naming a real defect
+tests/                           120 regression tests, each naming a real defect
 Dockerfile                       Backend image (API + fitted model, no database)
 docker-compose.yml               api + frontend; Postgres behind the `etl` profile
 frontend/
@@ -511,7 +515,7 @@ frontend/
 ## Tests
 
 ```bash
-pytest tests/          # 102 regression tests
+pytest tests/          # 120 regression tests
 ruff check .           # lint
 ```
 

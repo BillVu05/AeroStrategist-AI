@@ -29,7 +29,12 @@ from pacific_wings.analysis.world_airports import (
 )
 from pacific_wings.ml.features import ReferenceData
 from pacific_wings.ml.market_model import MarketModel
-from pacific_wings.simulation.cost import BLOCK_TIME_OVERHEAD_H, CostModel, latest_fuel_price
+from pacific_wings.simulation.cost import (
+    BLOCK_TIME_OVERHEAD_H,
+    WEEKS_PER_MONTH,
+    CostModel,
+    latest_fuel_price,
+)
 from pacific_wings.simulation.engine import (
     MARKET_FARE_ELASTICITY,
     MAX_SELLABLE_LOAD_FACTOR,
@@ -45,10 +50,13 @@ from pacific_wings.simulation.revenue import CABIN_FARE_MULTIPLIERS, CABIN_FILL_
 # ─── constants ────────────────────────────────────────────────────────────────
 
 KG_PER_GALLON = 3.03
-WEEKS_PER_MONTH = 4.345
 # Fuel default comes from the same reference series the simulator uses, so a
 # screening run and a scenario run price fuel identically.
 BASELINE_FUEL_USD_PER_GAL = latest_fuel_price()
+
+# Compare at most this many candidates in one call: each one is a full gravity
+# + financial + risk screen.
+MAX_COMPARISON_DESTINATIONS = 8
 
 # ─── aircraft specs (mirrors aircraft_specs.json) ────────────────────────────
 
@@ -942,10 +950,17 @@ def compare_route_alternatives(
         hours individually needed 171 of the 90 available between them, and the
         comparison table had no fleet column at all.
     """
+    if not 2 <= len(destinations) <= MAX_COMPARISON_DESTINATIONS:
+        # This used to be a silent `destinations[:8]`: ask for ten candidates,
+        # get eight ranked as though that were the shortlist.
+        raise ValueError(
+            f"Compare 2-{MAX_COMPARISON_DESTINATIONS} destinations at a time; got {len(destinations)}."
+        )
+
     results = []
     errors = []
 
-    for dest in destinations[:8]:
+    for dest in destinations:
         analysis = analyze_open_route(
             dest,
             weekly_frequency=weekly_frequency,

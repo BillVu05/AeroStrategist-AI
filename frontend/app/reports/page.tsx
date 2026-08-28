@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { getReports } from "@/lib/api";
+import { deleteReport, getReport, getReports } from "@/lib/api";
+import { downloadText } from "@/lib/download";
 import type { ReportSummary } from "@/lib/types";
 import { AGENT_META } from "@/lib/reportMeta";
 import LoadingSpinner from "@/components/LoadingSpinner";
@@ -34,14 +35,39 @@ function AgentChips({ agents, size = 6 }: { agents: string[]; size?: number }) {
   );
 }
 
-function ReportCard({ report }: { report: ReportSummary }) {
+function DeleteButton({ report, onDelete, className }: { report: ReportSummary; onDelete: (id: string) => void; className?: string }) {
+  return (
+    <button
+      type="button"
+      title="Delete report"
+      onClick={(e) => {
+        e.preventDefault();
+        if (confirm(`Delete "${report.title}"? This cannot be undone.`)) onDelete(report.id);
+      }}
+      className={`flex h-6 w-6 items-center justify-center rounded-full border border-white/10 bg-black/40 text-on-surface-variant transition-colors hover:border-red-500/50 hover:text-red-400 ${className ?? ""}`}
+    >
+      <span className="material-symbols-outlined text-[14px]">close</span>
+    </button>
+  );
+}
+
+async function downloadReport(report: ReportSummary) {
+  const record = await getReport(report.id);
+  const slug = report.title.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "");
+  downloadText(`${slug || "report"}.json`, JSON.stringify(record, null, 2), "application/json");
+}
+
+function ReportCard({ report, onDelete }: { report: ReportSummary; onDelete: (id: string) => void }) {
   return (
     <div className="glass-panel group relative flex flex-col overflow-hidden rounded-xl transition-all duration-300 hover:border-tertiary/40">
       <div className="relative flex h-32 items-center justify-center overflow-hidden bg-gradient-to-br from-tertiary/10 via-surface-container to-black/40">
         <span className="font-label text-3xl font-bold tracking-tight text-on-surface/10">{report.destination}</span>
         <div className="absolute inset-0 bg-gradient-to-t from-surface-container/90 to-transparent" />
-        <div className="absolute right-3 top-3 rounded border border-tertiary/30 bg-tertiary/20 px-2 py-0.5 font-label text-[9px] uppercase tracking-widest text-tertiary">
-          GENERATED
+        <div className="absolute right-3 top-3 flex items-center gap-2">
+          <span className="rounded border border-tertiary/30 bg-tertiary/20 px-2 py-0.5 font-label text-[9px] uppercase tracking-widest text-tertiary">
+            GENERATED
+          </span>
+          <DeleteButton report={report} onDelete={onDelete} />
         </div>
         <div className="absolute bottom-3 left-3 font-label text-[10px] uppercase tracking-widest text-on-surface-variant/70">
           SYD → {report.destination}
@@ -66,8 +92,15 @@ function ReportCard({ report }: { report: ReportSummary }) {
         <Link href={`/reports/${report.id}`} className="flex items-center gap-2 font-label text-xs text-on-surface transition-colors hover:text-tertiary">
           <span className="material-symbols-outlined text-[16px]">visibility</span> Preview
         </Link>
-        <button type="button" className="flex items-center gap-2 font-label text-xs text-on-surface transition-colors hover:text-tertiary">
-          <span className="material-symbols-outlined text-[16px]">download</span> Download PDF
+        {/* Was a "Download PDF" button with no handler. The library only holds
+            summaries, so this fetches the full record before saving it; PDF is
+            the browser's print dialog, from the report page itself. */}
+        <button
+          type="button"
+          onClick={() => void downloadReport(report)}
+          className="flex items-center gap-2 font-label text-xs text-on-surface transition-colors hover:text-tertiary"
+        >
+          <span className="material-symbols-outlined text-[16px]">download</span> Download JSON
         </button>
       </div>
     </div>
@@ -119,6 +152,18 @@ export default function ReportsLibraryPage() {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function remove(id: string) {
+    // Optimistic: drop the card immediately, put it back if the API refuses.
+    const previous = reports;
+    setReports((rs) => rs.filter((r) => r.id !== id));
+    try {
+      await deleteReport(id);
+    } catch (err) {
+      setReports(previous);
+      setError(err instanceof Error ? err.message : String(err));
     }
   }
 
@@ -220,8 +265,10 @@ export default function ReportsLibraryPage() {
           onClick={() => void load()}
           className="flex items-center gap-2 rounded border border-white/5 bg-surface-variant px-6 py-2.5 font-label text-sm text-on-surface transition-colors hover:bg-surface-container-highest"
         >
-          <span className="material-symbols-outlined text-[20px]">filter_list</span>
-          Apply Filters
+          {/* The three filters above apply as you change them; this refetches
+              the library, which is what the button always actually did. */}
+          <span className="material-symbols-outlined text-[20px]">refresh</span>
+          Refresh
         </button>
       </div>
 
@@ -263,7 +310,7 @@ export default function ReportsLibraryPage() {
       {!loading && !error && (
         view === "grid" ? (
           <div className="grid grid-cols-1 gap-6 md:grid-cols-2 xl:grid-cols-3">
-            {filtered.map((r) => <ReportCard key={r.id} report={r} />)}
+            {filtered.map((r) => <ReportCard key={r.id} report={r} onDelete={remove} />)}
             <InitiateAnalysisCard />
           </div>
         ) : (
@@ -273,18 +320,17 @@ export default function ReportsLibraryPage() {
                 <p className="px-4 py-6 text-center text-sm text-on-surface-variant">No saved reports match these filters.</p>
               )}
               {filtered.map((r) => (
-                <Link
-                  key={r.id}
-                  href={`/reports/${r.id}`}
-                  className="flex items-center gap-4 px-4 py-3 transition-colors hover:bg-white/5"
-                >
-                  <span className="w-36 shrink-0 font-label text-[10px] text-on-surface-variant/50">{fmtDate(r.created_at)}</span>
-                  <span className="flex-1 truncate text-sm text-on-surface">{r.title}</span>
-                  <span className="w-32 shrink-0 font-label text-[9px] uppercase tracking-widest text-on-surface-variant/60">
-                    {r.kind === "open_route" ? "Open Route" : "Network"}
-                  </span>
-                  <AgentChips agents={r.agents} size={5} />
-                </Link>
+                <div key={r.id} className="flex items-center gap-4 px-4 py-3 transition-colors hover:bg-white/5">
+                  <Link href={`/reports/${r.id}`} className="flex min-w-0 flex-1 items-center gap-4">
+                    <span className="w-36 shrink-0 font-label text-[10px] text-on-surface-variant/50">{fmtDate(r.created_at)}</span>
+                    <span className="flex-1 truncate text-sm text-on-surface">{r.title}</span>
+                    <span className="w-32 shrink-0 font-label text-[9px] uppercase tracking-widest text-on-surface-variant/60">
+                      {r.kind === "open_route" ? "Open Route" : "Network"}
+                    </span>
+                    <AgentChips agents={r.agents} size={5} />
+                  </Link>
+                  <DeleteButton report={r} onDelete={remove} className="shrink-0" />
+                </div>
               ))}
             </div>
             <InitiateAnalysisCard />

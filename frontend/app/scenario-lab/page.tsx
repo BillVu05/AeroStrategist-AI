@@ -25,6 +25,7 @@ import MarketShareChart from "@/components/MarketShareChart";
 import MonteCarloPanel from "@/components/MonteCarloPanel";
 import ErrorMessage from "@/components/ErrorMessage";
 import LoadingSpinner from "@/components/LoadingSpinner";
+import { fmtPax, fmtUsd } from "@/lib/format";
 
 type Tab = "whatif" | "stress" | "longrange";
 
@@ -34,20 +35,7 @@ const TABS: { id: Tab; label: string }[] = [
   { id: "longrange", label: "Long-range Projection" },
 ];
 
-function fmtUsd(v: number) {
-  const abs = Math.abs(v);
-  const sign = v < 0 ? "-" : "";
-  if (abs >= 1e9) return `${sign}$${(abs / 1e9).toFixed(2)}B`;
-  if (abs >= 1e6) return `${sign}$${(abs / 1e6).toFixed(1)}M`;
-  if (abs >= 1e3) return `${sign}$${(abs / 1e3).toFixed(0)}K`;
-  return `${sign}$${abs.toFixed(0)}`;
-}
 
-function fmtPax(v: number) {
-  if (v >= 1e6) return `${(v / 1e6).toFixed(2)}M`;
-  if (v >= 1e3) return `${(v / 1e3).toFixed(0)}K`;
-  return String(Math.round(v));
-}
 
 export default function ScenarioLabPage() {
   return (
@@ -181,7 +169,6 @@ interface StressResult {
   baselineProfit: number;
   scenario: StressScenario;
   severity: number;
-  duration: number;
 }
 
 function StressTestTab({ initialDestination }: { initialDestination: string }) {
@@ -190,7 +177,6 @@ function StressTestTab({ initialDestination }: { initialDestination: string }) {
   const [stressRoute, setStressRoute] = useState<string>("");
   const [stressScenario, setStressScenario] = useState<StressScenario>("oil_price_surge");
   const [stressSeverity, setStressSeverity] = useState(5);
-  const [stressDuration, setStressDuration] = useState(6);
   const [stress, setStress] = useState<StressResult | null>(null);
   const [running, setRunning] = useState(false);
 
@@ -226,22 +212,37 @@ function StressTestTab({ initialDestination }: { initialDestination: string }) {
       // each scenario type, then lets the real fuel/GDP/competitor sampling
       // (simulation/monte_carlo.py) produce the outcome distribution around
       // that shock, instead of a single deterministic point estimate.
-      let params: { price_delta_pct?: number; fuel_price_center?: number } = {};
+      // A pandemic and a recession are demand shocks: they used to be modelled
+      // here as fare cuts, which moves revenue per seat rather than the number
+      // of people who want to travel, and made the two scenarios the same
+      // mechanism at different strengths. `tourism_arrivals_multiplier` reaches
+      // market size through the engine's tourism elasticity.
+      let params: {
+        price_delta_pct?: number;
+        fuel_price_center?: number;
+        tourism_arrivals_multiplier?: number;
+      } = {};
       switch (stressScenario) {
         case "oil_price_surge":
           params = { fuel_price_center: baseFuel * (1 + stressSeverity * 0.07) };
           break;
         case "regional_conflict":
           params = {
-            price_delta_pct: -(stressSeverity * 0.04),
+            tourism_arrivals_multiplier: 1 - stressSeverity * 0.05,
             fuel_price_center: baseFuel * (1 + stressSeverity * 0.03),
           };
           break;
         case "pandemic":
-          params = { price_delta_pct: -(stressSeverity * 0.07) };
+          params = {
+            tourism_arrivals_multiplier: 1 - stressSeverity * 0.08,
+            price_delta_pct: -(stressSeverity * 0.02),
+          };
           break;
         case "recession":
-          params = { price_delta_pct: -(stressSeverity * 0.03) };
+          params = {
+            tourism_arrivals_multiplier: 1 - stressSeverity * 0.03,
+            price_delta_pct: -(stressSeverity * 0.02),
+          };
           break;
       }
       const result = await getMonteCarlo({
@@ -256,7 +257,6 @@ function StressTestTab({ initialDestination }: { initialDestination: string }) {
         baselineProfit: baseline.baseline.profit_usd,
         scenario: stressScenario,
         severity: stressSeverity,
-        duration: stressDuration,
       });
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -341,22 +341,6 @@ function StressTestTab({ initialDestination }: { initialDestination: string }) {
                 className="w-full"
               />
             </div>
-            <div>
-              <div className="mb-2 flex justify-between">
-                <span className="font-label text-[10px] uppercase tracking-widest text-on-surface-variant">
-                  Duration (months)
-                </span>
-                <span className="font-label text-xs text-on-surface">{stressDuration}</span>
-              </div>
-              <input
-                type="range"
-                min={1}
-                max={24}
-                value={stressDuration}
-                onChange={(e) => setStressDuration(Number(e.target.value))}
-                className="w-full"
-              />
-            </div>
             <button
               type="button"
               onClick={runStressTest}
@@ -400,7 +384,7 @@ function StressTestTab({ initialDestination }: { initialDestination: string }) {
                       Shock outcome · SYD → {stress.result.destination}
                     </h4>
                     <span className="font-label text-[10px] uppercase tracking-widest text-on-surface-variant/60">
-                      {scenLabel} · Severity {stress.severity}/10 · {stress.duration}mo horizon assumed ·{" "}
+                      {scenLabel} · Severity {stress.severity}/10 · one month ·{" "}
                       {stress.result.n_simulations} simulations
                     </span>
                   </div>

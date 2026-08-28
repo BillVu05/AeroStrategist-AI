@@ -1,6 +1,6 @@
 # AI Agent Architecture
 
-This documents how the LangGraph agents and the Copilot endpoint
+This documents how the report agents and the Copilot endpoint
 (`agents/`, `/copilot`) split work between the deterministic simulation
 engine and the LLM narration layer, so results can be
 interpreted honestly - same spirit as `docs/cost_assumptions.md`.
@@ -13,8 +13,8 @@ layer narrates them and nothing else. Every agent degrades to an explicit
 `{"available": false, ...}` notice when no API key is set, so the numeric
 answer is identical with or without one.
 
-- **Demand agent** (`pacific_wings/agents/demand_agent.py`) and **Finance agent**
-  (`pacific_wings/agents/finance_agent.py`) are pure functions with no LLM call. They
+- **Demand agent** (`copilot.summarize_demand`) and **Finance agent**
+  (`copilot.summarize_finance`) are pure functions with no LLM call. They
   extract and label fields already computed by
   `SimulationEngine.compare()` (passengers, load factor, revenue, cost,
   profit, deltas). Given the same simulation output, they always return the
@@ -29,8 +29,8 @@ answer is identical with or without one.
 
 | Agent | Module | LLM? | Input | Output |
 |---|---|---|---|---|
-| Demand | `pacific_wings/agents/demand_agent.py` | No | `engine.compare()` result | baseline/scenario/delta passenger & load-factor facts |
-| Finance | `pacific_wings/agents/finance_agent.py` | No | `engine.compare()` result | baseline/scenario/delta revenue/cost/profit facts |
+| Demand | `pacific_wings/agents/copilot.py` (`summarize_demand`) | No | `engine.compare()` result | baseline/scenario/delta passenger & load-factor facts |
+| Finance | `pacific_wings/agents/copilot.py` (`summarize_finance`) | No | `engine.compare()` result | baseline/scenario/delta revenue/cost/profit facts |
 | Market | `pacific_wings/agents/market_agent.py` | Yes | route market context (`pacific_wings/agents/context.py`) | qualitative commentary on demand drivers, tourism, competition |
 | Risk | `pacific_wings/agents/risk_agent.py` | Yes | market context + simulation comparison | 2-4 material risks (fuel, competition, capacity, macro) |
 | Strategy | `pacific_wings/agents/strategy_agent.py` | Yes | demand/finance summaries + market/risk commentary | executive summary + proceed/caution/no-go recommendation |
@@ -47,26 +47,39 @@ tourism arrivals baseline - `data/airline_profile.json`), and
 that already feed the demand model. Claude interprets this data
 qualitatively; it does not introduce new figures.
 
-## LangGraph pipeline (`pacific_wings/agents/graph.py`)
+## The pipeline (`pacific_wings/agents/copilot.py`)
 
 ```
 simulation -> demand -> finance -> market -> risk -> strategy
 ```
 
 - `simulation`: runs `SimulationEngine.compare()` once and builds the market
-  context, so every downstream node works from the same numbers.
+  context, so every downstream step works from the same numbers.
 - `demand`, `finance`: pure extraction (no LLM).
 - `market`, `risk`, `strategy`: sequential Claude calls, each building on the
   prior agents' output.
 
+This was a LangGraph `StateGraph` until the six nodes were noticed to be a
+straight line with no branch, no retry and no persistence, and one caller.
+`run_copilot` now calls them in order and the dependency is gone.
+
 ## Copilot (`pacific_wings/agents/copilot.py`, `/copilot` endpoint)
 
-`run_copilot(destination, year, month, **scenario_kwargs)` runs the graph
-above and returns a single response combining:
+`run_copilot(destination, year, month, question=None, evidence=None,
+**scenario_kwargs)` runs the pipeline above and returns a single response
+combining:
 
 - `scenario`, `demand`, `finance` - straight from the simulation engine
 - `market_analysis`, `risk_analysis`, `strategy` - Claude narration, each
   with an `"available"` flag
+
+`question` and `evidence` are how the Copilot tab's "deep dive" button works:
+the executive's own wording plus the chat answer already on screen are folded
+into one steering brief (`copilot.brief()`) handed to the Market, Risk and
+Strategy prompts, which are told to go deeper than that answer rather than
+restate it. Neither changes a figure - the simulation is identical with or
+without them, so the deep dive is a different narration of the same numbers.
+Because `evidence` is a whole chat reply, `/copilot` is a POST.
 
 ## Missing API key / degraded mode
 

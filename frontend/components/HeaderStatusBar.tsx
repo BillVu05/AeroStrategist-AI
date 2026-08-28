@@ -55,18 +55,11 @@ export default function HeaderStatusBar() {
           <span className="font-label text-[10px] text-tertiary">NETWORK LIVE</span>
           <span className="font-label text-[10px] text-on-surface-variant/40">SYD TERMINAL 1</span>
         </div>
-        <button
-          type="button"
-          aria-label="Notifications"
-          className="relative p-2 text-on-surface-variant transition-colors hover:bg-white/5 active:scale-90"
-        >
-          <span className="material-symbols-outlined text-[20px]">notifications</span>
-          <span className="absolute right-2 top-2 h-2 w-2 rounded-full bg-tertiary" />
-        </button>
-        <button
-          type="button"
-          className="flex items-center gap-2 rounded border border-white/10 bg-white/5 py-1 pl-2 pr-1 transition-colors hover:bg-white/10 active:scale-95"
-        >
+        {/* There was a notification bell here with a permanent unread dot and
+            no handler, and this user pill was a button that did nothing. There
+            is no notification feed and no account screen, so the bell is gone
+            and the pill is a label. */}
+        <div className="flex items-center gap-2 rounded border border-white/10 bg-white/5 py-1 pl-2 pr-1">
           <span className="font-label px-1 text-[11px] text-on-surface">C. MILTON</span>
           <div className="flex h-8 w-8 items-center justify-center rounded bg-accent-blue">
             <span
@@ -76,7 +69,7 @@ export default function HeaderStatusBar() {
               person
             </span>
           </div>
-        </button>
+        </div>
       </div>
     </header>
   );

@@ -1,4 +1,5 @@
 import type { ScenarioResult, WhatIfResponse } from "@/lib/types";
+import { deltaClass, fmtPct, fmtUsdExact as fmtUsd } from "@/lib/format";
 
 interface ComparisonCardsProps {
   baseline: ScenarioResult;
@@ -6,19 +7,8 @@ interface ComparisonCardsProps {
   delta: WhatIfResponse["delta"];
 }
 
-function fmtUsd(value: number) {
-  return `$${value.toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
-}
 
-function fmtPct(value: number) {
-  return `${(value * 100).toFixed(1)}%`;
-}
 
-function deltaClass(value: number) {
-  if (value > 0) return "text-tertiary";
-  if (value < 0) return "text-error";
-  return "text-on-surface-variant";
-}
 
 function signed(value: string, raw: number) {
   return raw > 0 ? `+${value}` : value;

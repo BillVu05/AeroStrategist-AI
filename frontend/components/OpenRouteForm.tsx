@@ -108,13 +108,19 @@ export default function OpenRouteForm({
           <span className="block font-label text-[10px] uppercase tracking-widest text-on-surface-variant">
             Weekly frequency
           </span>
+          {/* Number("") is 0, which posted weekly_frequency=0 and came back as
+              a raw 422. Empty means "size it to the market", like the other
+              optional fields on this form. */}
           <input
             type="number"
             min={1}
             step="1"
+            placeholder="Auto (by market)"
             className={FIELD_CLASS}
-            value={value.weekly_frequency}
-            onChange={(e) => set("weekly_frequency", Number(e.target.value))}
+            value={value.weekly_frequency ?? ""}
+            onChange={(e) =>
+              set("weekly_frequency", e.target.value === "" ? undefined : Number(e.target.value))
+            }
           />
         </label>
 

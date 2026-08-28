@@ -106,3 +106,40 @@ body {
 ::-webkit-scrollbar-thumb {
   background: rgba(255, 255, 255, 0.1);
 }
+
+/* Print / Save-as-PDF. The app is a dark glass UI; printed on paper that is a
+   full-page ink blot with unreadable low-contrast text, so the print view
+   drops the chrome and inverts to black-on-white. */
+@media print {
+  nav,
+  aside,
+  header,
+  footer,
+  .no-print {
+    display: none !important;
+  }
+
+  html,
+  body,
+  main {
+    background: #fff !important;
+    color: #000 !important;
+    height: auto !important;
+    overflow: visible !important;
+  }
+
+  .glass-panel {
+    background: #fff !important;
+    border: 1px solid #ccc !important;
+    box-shadow: none !important;
+    backdrop-filter: none !important;
+    break-inside: avoid;
+  }
+
+  /* Tailwind's arbitrary text colours are all light-on-dark. */
+  [class*="text-on-surface"],
+  [class*="text-primary"],
+  [class*="text-white"] {
+    color: #000 !important;
+  }
+}

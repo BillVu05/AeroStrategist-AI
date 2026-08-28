@@ -1,15 +1,15 @@
 "use client";
 
 import Link from "next/link";
-import { AGENT_DEFINITIONS } from "@/lib/constants";
+import { AGENT_LIST } from "@/lib/reportMeta";
 
 interface AgentStatusPanelProps {
   llmAvailable: boolean;
 }
 
 export default function AgentStatusPanel({ llmAvailable }: AgentStatusPanelProps) {
-  const onlineCount = AGENT_DEFINITIONS.filter((a) => !a.llmBacked || llmAvailable).length;
-  const total = AGENT_DEFINITIONS.length;
+  const onlineCount = AGENT_LIST.filter((a) => !a.llm || llmAvailable).length;
+  const total = AGENT_LIST.length;
   const circumference = 2 * Math.PI * 58;
   const offset = circumference * (1 - onlineCount / total);
 

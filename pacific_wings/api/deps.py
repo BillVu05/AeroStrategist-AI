@@ -14,7 +14,7 @@ from fastapi import HTTPException
 from pacific_wings import paths
 from pacific_wings.ml.features import ReferenceData
 from pacific_wings.simulation.cost import CostModel
-from pacific_wings.simulation.engine import SimulationEngine
+from pacific_wings.simulation.engine import SimulationEngine, expected_passengers_carried
 from pacific_wings.simulation.revenue import RevenueModel
 
 metrics = json.loads(paths.METRICS.read_text(encoding="utf-8"))
@@ -73,8 +73,17 @@ def forecast_demand(destination: str, year: int, month: int, avg_fare_usd: float
     market_high = max(0.0, market + quantiles["p90"] * growth)
 
     sellable = float(demand["sellable_seats"])
-    own_low = min(market_low * share, sellable)
-    own_high = min(market_high * share, sellable)
+    # The band is on DEMAND, so it is not clipped at what can be flown: the
+    # point estimate (`predicted_demand_passengers`) is not clipped either, and
+    # clipping only the ends produced intervals that excluded their own point
+    # estimate - SIN 2026-07 came back low=5353, point=6560, high=5353, a
+    # zero-width band on every capacity-bound route. What can be flown is
+    # reported separately, below, and gets the same spill treatment the point
+    # estimate gets so the load-factor band stays consistent with it.
+    own_low = market_low * share
+    own_high = market_high * share
+    carried_low = expected_passengers_carried(own_low, capacity_monthly)
+    carried_high = expected_passengers_carried(own_high, capacity_monthly)
 
     return {
         "route": route,
@@ -91,8 +100,8 @@ def forecast_demand(destination: str, year: int, month: int, avg_fare_usd: float
         "passengers_carried": float(demand["passengers_carried"]),
         "spilled_passengers": float(demand["spilled_passengers"]),
         "predicted_load_factor": demand["load_factor"],
-        "predicted_load_factor_low": own_low / capacity_monthly if capacity_monthly else 0.0,
-        "predicted_load_factor_high": own_high / capacity_monthly if capacity_monthly else 0.0,
+        "predicted_load_factor_low": carried_low / capacity_monthly if capacity_monthly else 0.0,
+        "predicted_load_factor_high": carried_high / capacity_monthly if capacity_monthly else 0.0,
         "confidence": {
             "confidence_pct": demand["confidence_pct"],
             "confidence_breakdown": demand["confidence_breakdown"],

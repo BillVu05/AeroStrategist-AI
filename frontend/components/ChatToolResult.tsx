@@ -1,28 +1,11 @@
 import type { AnalyzeRouteResponse, ChatToolCall, CompareRoutesResponse } from "@/lib/types";
 import { RouteAnalysisReport, RouteComparisonList } from "./RouteAnalysisCard";
+import { deltaClass, fmtPax, fmtUsd } from "@/lib/format";
 
 // ─── helpers ────────────────────────────────────────────────────────────────
 
-function deltaClass(v: number) {
-  if (v > 0) return "text-tertiary";
-  if (v < 0) return "text-error";
-  return "text-on-surface-variant";
-}
 
-function fmtUsd(v: number) {
-  const abs = Math.abs(v);
-  const sign = v < 0 ? "-" : "";
-  if (abs >= 1e9) return `${sign}$${(abs / 1e9).toFixed(2)}B`;
-  if (abs >= 1e6) return `${sign}$${(abs / 1e6).toFixed(1)}M`;
-  if (abs >= 1e3) return `${sign}$${(abs / 1e3).toFixed(0)}K`;
-  return `${sign}$${abs.toFixed(0)}`;
-}
 
-function fmtPax(v: number) {
-  if (v >= 1e6) return `${(v / 1e6).toFixed(2)}M`;
-  if (v >= 1e3) return `${(v / 1e3).toFixed(0)}K`;
-  return String(Math.round(v));
-}
 
 const MONTH_SHORT = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
 

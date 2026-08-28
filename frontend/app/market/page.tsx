@@ -10,6 +10,7 @@ import ErrorMessage from "@/components/ErrorMessage";
 import MarketShareLeaderboard, { type MarketRow } from "@/components/MarketShareLeaderboard";
 import DemandDriversPanel from "@/components/DemandDriversPanel";
 import TrendLinePanel from "@/components/TrendLinePanel";
+import { fmtPax } from "@/lib/format";
 
 const MONTH_LABELS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
@@ -44,11 +45,6 @@ interface ForecastData {
   avgLoadFactor: number;
 }
 
-function fmtPax(value: number) {
-  if (value >= 1e6) return `${(value / 1e6).toFixed(2)}M`;
-  if (value >= 1e3) return `${(value / 1e3).toFixed(0)}K`;
-  return value.toFixed(0);
-}
 
 export default function MarketDemandPage() {
   const [data, setData] = useState<MarketDemandData | null>(null);
@@ -90,6 +86,13 @@ export default function MarketDemandPage() {
           .sort((a, b) => b.frequency - a.frequency)
           .slice(0, 6);
 
+        // Same guard as the dashboard: an empty route list would make the
+        // reduce below throw and every average NaN.
+        if (perRoute.length === 0) {
+          if (!cancelled) setError("No routes in the airline profile - nothing to analyse.");
+          return;
+        }
+
         // Demand drivers for the busiest market by predicted passengers.
         const busiest = perRoute.reduce((best, r) =>
           r.demand.predicted_passengers > best.demand.predicted_passengers ? r : best
@@ -104,6 +107,7 @@ export default function MarketDemandPage() {
 
         // 12-month network forecast (active routes x 12 slow model calls) -
         // loaded after the fast sections so it doesn't block the whole page.
+        if (activeRoutes.length === 0) return; // avgLoadFactor would be NaN
         const yearlyForecasts: DemandForecastResponse[][] = await Promise.all(
           activeRoutes.map((route) =>
             Promise.all(

@@ -345,6 +345,7 @@ def network_future_analysis(
          routes: [...sorted by profit...]}
     """
     routes_out = []
+    failed_routes: list[dict] = []
     plan = plan_network_schedule(from_year, to_year) if optimise_schedule else {}
 
     for route in _ref.routes_by_destination.values():
@@ -389,8 +390,10 @@ def network_future_analysis(
                 "start_year_weekly_frequency": first["weekly_frequency"],
                 "end_year_weekly_frequency": last["weekly_frequency"],
             })
-        except Exception:
-            pass
+        except Exception as exc:
+            # A dropped route used to leave no trace, so the network totals
+            # below silently stopped being the network.
+            failed_routes.append({"destination": dest, "error": f"{type(exc).__name__}: {exc}"})
 
     routes_out.sort(key=lambda r: r["total_projected_profit_usd"], reverse=True)
 
@@ -411,6 +414,7 @@ def network_future_analysis(
         "schedule_optimised": optimise_schedule,
         "active_network_totals": _totals(active),
         "candidate_totals": _totals(candidates),
+        "failed_routes": failed_routes,
         "totals_note": (
             "Active and candidate routes are totalled separately. A candidate has not been "
             "launched and may never be - screen it with /analyze_route before reading its "

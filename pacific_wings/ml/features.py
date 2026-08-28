@@ -18,6 +18,10 @@ import pandas as pd
 
 from pacific_wings import paths
 
+# Re-exported: the cost model owns both (see its comment there). Callers have
+# always read them off this module, so the name stays importable from here.
+from pacific_wings.simulation.cost import NOTIONAL_CANDIDATE_FREQUENCY, WEEKS_PER_MONTH
+
 ROOT = paths.ROOT
 
 COUNTRY_ALPHA2_TO_ALPHA3 = {
@@ -28,8 +32,6 @@ COUNTRY_ALPHA2_TO_ALPHA3 = {
     "VN": "VNM",
 }
 
-WEEKS_PER_MONTH = 4.345
-NOTIONAL_CANDIDATE_FREQUENCY = 3
 
 # Ordered feature columns the model is trained/predicted on.
 FEATURE_COLUMNS = [

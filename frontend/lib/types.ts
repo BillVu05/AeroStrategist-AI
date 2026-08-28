@@ -104,7 +104,6 @@ export interface ScenarioDemand {
     tourism: number;
     gdp_shock: number;
   };
-  market_growth_multiplier: number;
   predicted_demand_passengers: number;
   capacity_monthly: number;
   sellable_seats: number;
@@ -270,6 +269,8 @@ export interface CopilotResponse {
   destination: string;
   year: number;
   month: number;
+  /** The executive question the run was steered at, if any. */
+  question?: string | null;
   scenario: ScenarioParams;
   demand: {
     baseline: ScenarioDemand;
@@ -614,7 +615,8 @@ export interface SaveReportRequest {
 // Shared form state for the Open Route page.
 export interface OpenRouteFormValue {
   destination: string;
-  weekly_frequency: number;
+  /** Undefined = let the API size the schedule to the market. */
+  weekly_frequency?: number;
   aircraft_type?: string;
   avg_fare_usd?: number;
   fuel_price_usd_per_gallon?: number;
@@ -632,5 +634,8 @@ export interface ScenarioInput {
   aircraft_type?: string;
   rating_delta?: number;
   preset?: string;
+  question?: string;
+  /** The chat answer the report should go deeper than (capped server-side). */
+  evidence?: string;
   [key: string]: unknown;
 }

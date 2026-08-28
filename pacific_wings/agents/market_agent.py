@@ -23,13 +23,20 @@ positioning, and tourism/economic trends. Do not invent statistics beyond \
 what is given - only interpret the provided data qualitatively."""
 
 
-def analyze(market_ctx: dict) -> dict:
-    """Returns {"available": bool, "commentary": str, "context": market_ctx}."""
+def analyze(market_ctx: dict, question: str | None = None) -> dict:
+    """
+    Returns {"available": bool, "commentary": str, "context": market_ctx}.
+
+    `question` is the executive's own question (from the Copilot chat); when
+    given, the commentary is steered at it instead of being generic.
+    """
     user_message = (
         "Route market data (JSON):\n"
         f"{json.dumps(market_ctx, indent=2)}\n\n"
         "Write the market commentary."
     )
+    if question:
+        user_message += f"\n\nFocus on what bears on this question: {question}"
 
     commentary = complete(SYSTEM_PROMPT, user_message)
 

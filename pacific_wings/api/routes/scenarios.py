@@ -21,7 +21,7 @@ from pacific_wings.api.config import (
     YEAR_MIN,
 )
 from pacific_wings.api.deps import engine
-from pacific_wings.api.schemas import ChatRequest
+from pacific_wings.api.schemas import ChatRequest, CopilotRequest
 from pacific_wings.simulation.monte_carlo import MAX_SIMULATIONS, run_monte_carlo
 from pacific_wings.simulation.presets import list_presets, preset_kwargs
 
@@ -86,6 +86,7 @@ def monte_carlo(
     aircraft_type: str | None = None,
     rating_delta: float = Query(0.0, ge=RATING_DELTA_MIN, le=RATING_DELTA_MAX),
     fuel_price_center: float | None = Query(None, ge=FUEL_PRICE_MIN, le=FUEL_PRICE_MAX),
+    tourism_arrivals_multiplier: float = Query(1.0, gt=0.0, le=3.0),
 ):
     """
     Phase 5 (real-data rebuild): Monte Carlo scenario simulator. Samples fuel
@@ -107,6 +108,11 @@ def monte_carlo(
         "frequency_delta": frequency_delta,
         "aircraft_type": aircraft_type,
         "rating_delta": rating_delta,
+        # A demand shock, held fixed across trials. Without it the UI's
+        # "pandemic" and "recession" stress scenarios both had to be faked as
+        # fare cuts, which moves revenue per seat rather than the number of
+        # people who want to travel.
+        "tourism_arrivals_multiplier": tourism_arrivals_multiplier,
     }
     try:
         return run_monte_carlo(
@@ -121,20 +127,10 @@ def monte_carlo(
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
-@router.get("/copilot", dependencies=LLM_GUARDS)
-def copilot(
-    destination: str,
-    year: int = Query(..., ge=YEAR_MIN, le=YEAR_MAX),
-    month: int = Query(..., ge=1, le=12),
-    price_delta_pct: float = Query(0.0, ge=PRICE_DELTA_MIN, le=PRICE_DELTA_MAX),
-    frequency_delta: int = Query(0, ge=FREQUENCY_DELTA_MIN, le=FREQUENCY_DELTA_MAX),
-    fuel_price_usd_per_gallon: float | None = Query(None, ge=FUEL_PRICE_MIN, le=FUEL_PRICE_MAX),
-    aircraft_type: str | None = None,
-    rating_delta: float = Query(0.0, ge=RATING_DELTA_MIN, le=RATING_DELTA_MAX),
-    preset: str | None = None,
-):
+@router.post("/copilot", dependencies=LLM_GUARDS)
+def copilot(req: CopilotRequest):
     """
-    Phase 8-9: runs the LangGraph agent pipeline (Market, Demand, Finance,
+    Phase 8-9: runs the five-agent pipeline (Market, Demand, Finance,
     Risk, Strategy) over the Phase 7 simulation for the given route/scenario
     and returns an executive summary. Demand/finance figures come directly
     from the simulation engine; market/risk/strategy commentary comes from
@@ -142,19 +138,32 @@ def copilot(
 
     Phase 10: pass `preset` (see /what_if_presets) to run the agents over a
     named what-if scenario instead of, or alongside, the manual deltas above.
+
+    Pass `question` (the executive's own wording, from the Copilot chat) to
+    steer the Market/Risk/Strategy commentary at that question, and `evidence`
+    (the chat answer already on screen) so the agents go deeper than it
+    instead of restating it. Neither changes a figure - the simulation is
+    identical with or without them.
     """
-    destination = destination.upper()
+    destination = req.destination.upper()
     scenario_kwargs = {
-        "price_delta_pct": price_delta_pct,
-        "frequency_delta": frequency_delta,
-        "fuel_price_usd_per_gallon": fuel_price_usd_per_gallon,
-        "aircraft_type": aircraft_type,
-        "rating_delta": rating_delta,
+        "price_delta_pct": req.price_delta_pct,
+        "frequency_delta": req.frequency_delta,
+        "fuel_price_usd_per_gallon": req.fuel_price_usd_per_gallon,
+        "aircraft_type": req.aircraft_type,
+        "rating_delta": req.rating_delta,
     }
     try:
-        if preset is not None:
-            scenario_kwargs.update(preset_kwargs(engine, preset, destination))
-        return run_copilot(destination, year, month, **scenario_kwargs)
+        if req.preset is not None:
+            scenario_kwargs.update(preset_kwargs(engine, req.preset, destination))
+        return run_copilot(
+            destination,
+            req.year,
+            req.month,
+            question=req.question,
+            evidence=req.evidence,
+            **scenario_kwargs,
+        )
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 

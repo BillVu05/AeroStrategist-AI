@@ -4,6 +4,7 @@ import { useState } from "react";
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { getMonteCarlo } from "@/lib/api";
 import type { MonteCarloResponse, ScenarioInput } from "@/lib/types";
+import { fmtUsd } from "@/lib/format";
 
 interface MonteCarloPanelProps {
   input: ScenarioInput;
@@ -11,10 +12,6 @@ interface MonteCarloPanelProps {
 
 const N_SIMULATIONS = 500;
 
-function fmtUsd(v: number) {
-  const sign = v < 0 ? "-" : "";
-  return `${sign}$${(Math.abs(v) / 1000).toFixed(0)}k`;
-}
 
 function Stat({ label, value, accent }: { label: string; value: string; accent?: string }) {
   return (

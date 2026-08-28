@@ -22,6 +22,11 @@ ROOT = paths.ROOT
 
 KG_PER_GALLON = 3.03
 BASELINE_FUEL_PRICE_USD_PER_GALLON = 1.74  # 2019 EIA annual average
+# The canonical copies: pacific_wings/ml/features.py and
+# pacific_wings/analysis/open_route.py import them from here. All three used to
+# define 4.345 and 3 for themselves, so a change to the schedule convention had
+# to be made in three files or the capacity and the cost of the same month
+# stopped agreeing.
 WEEKS_PER_MONTH = 4.345
 NOTIONAL_CANDIDATE_FREQUENCY = 3
 

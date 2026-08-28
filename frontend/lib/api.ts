@@ -135,6 +135,8 @@ export function getMonteCarlo(params: {
   aircraft_type?: string;
   rating_delta?: number;
   fuel_price_center?: number;
+  /** Demand shock held fixed across trials: 0.6 = a 40% fall in arrivals. */
+  tourism_arrivals_multiplier?: number;
 }) {
   return getJSON<MonteCarloResponse>("/monte_carlo", params);
 }
@@ -143,8 +145,18 @@ export function getRoutes() {
   return getJSON<RoutesResponse>("/routes");
 }
 
-export function getCopilot(params: ScenarioInput) {
-  return getJSON<CopilotResponse>("/copilot", params);
+/** POST, not GET: `evidence` carries the chat answer and is too big for a URL. */
+export async function getCopilot(params: ScenarioInput) {
+  const res = await fetch(new URL("/copilot", BASE_URL), {
+    method: "POST",
+    headers: authHeaders({ "Content-Type": "application/json" }),
+    body: JSON.stringify(params),
+  });
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`API error ${res.status} for /copilot: ${body}`);
+  }
+  return res.json() as Promise<CopilotResponse>;
 }
 
 export function getMacroProjection(destination: string, fromYear: number = 2024, toYear: number = 2032) {

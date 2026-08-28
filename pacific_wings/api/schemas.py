@@ -7,7 +7,20 @@ figure is derived from it. A single unqualified `passengers` field is how the
 two came to be confused in the first place.
 """
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+
+from pacific_wings.api.config import (
+    FREQUENCY_DELTA_MAX,
+    FREQUENCY_DELTA_MIN,
+    FUEL_PRICE_MAX,
+    FUEL_PRICE_MIN,
+    PRICE_DELTA_MAX,
+    PRICE_DELTA_MIN,
+    RATING_DELTA_MAX,
+    RATING_DELTA_MIN,
+    YEAR_MAX,
+    YEAR_MIN,
+)
 
 
 class ChatMessage(BaseModel):
@@ -17,6 +30,27 @@ class ChatMessage(BaseModel):
 
 class ChatRequest(BaseModel):
     messages: list[ChatMessage]
+
+
+class CopilotRequest(BaseModel):
+    """
+    A /copilot run. POST rather than GET because `evidence` carries the chat
+    answer the report is meant to go deeper than, which is too big for a URL.
+    """
+
+    destination: str
+    year: int = Field(ge=YEAR_MIN, le=YEAR_MAX)
+    month: int = Field(ge=1, le=12)
+    price_delta_pct: float = Field(0.0, ge=PRICE_DELTA_MIN, le=PRICE_DELTA_MAX)
+    frequency_delta: int = Field(0, ge=FREQUENCY_DELTA_MIN, le=FREQUENCY_DELTA_MAX)
+    fuel_price_usd_per_gallon: float | None = Field(None, ge=FUEL_PRICE_MIN, le=FUEL_PRICE_MAX)
+    aircraft_type: str | None = None
+    rating_delta: float = Field(0.0, ge=RATING_DELTA_MIN, le=RATING_DELTA_MAX)
+    preset: str | None = None
+    question: str | None = Field(None, max_length=500)
+    # The chat answer already on screen. Capped: it is prompt input, and an
+    # uncapped body field is an easy way to burn someone's LLM quota.
+    evidence: str | None = Field(None, max_length=8000)
 
 
 class ConfidenceBreakdown(BaseModel):

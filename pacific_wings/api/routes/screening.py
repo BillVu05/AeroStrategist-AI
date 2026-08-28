@@ -104,13 +104,14 @@ def compare_routes_endpoint(
     Accepts 2-8 destinations as a comma-separated string.
     """
     dest_list = [d.strip() for d in destinations.split(",") if d.strip()]
-    if len(dest_list) < 2:
-        raise HTTPException(status_code=400, detail="Provide at least 2 destinations separated by commas.")
-    return compare_route_alternatives(
-        dest_list,
-        weekly_frequency=weekly_frequency,
-        fuel_price_usd_per_gallon=fuel_price_usd_per_gallon,
-    )
+    try:
+        return compare_route_alternatives(
+            dest_list,
+            weekly_frequency=weekly_frequency,
+            fuel_price_usd_per_gallon=fuel_price_usd_per_gallon,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 @router.get("/search_airports")
 def search_airports_endpoint(

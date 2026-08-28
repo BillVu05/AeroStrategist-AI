@@ -7,7 +7,5 @@ scikit-learn
 xgboost
 fastapi
 uvicorn[standard]
-langgraph
-langchain-core
 google-genai
 python-dotenv

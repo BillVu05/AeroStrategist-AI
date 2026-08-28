@@ -22,7 +22,13 @@ proceed with caution / do not proceed). Do not invent or alter any numbers -\
 only use the figures provided."""
 
 
-def recommend(demand_summary: dict, finance_summary: dict, market_analysis: dict, risk_analysis: dict) -> dict:
+def recommend(
+    demand_summary: dict,
+    finance_summary: dict,
+    market_analysis: dict,
+    risk_analysis: dict,
+    question: str | None = None,
+) -> dict:
     """Returns {"available": bool, "executive_summary": str}."""
     user_message = (
         "Demand summary (JSON):\n"
@@ -35,8 +41,17 @@ def recommend(demand_summary: dict, finance_summary: dict, market_analysis: dict
         f"{risk_analysis.get('risks', '')}\n\n"
         "Write the executive summary and recommendation."
     )
+    if question:
+        user_message += (
+            f"\n\nThe executive asked: {question}\n"
+            "Answer that question directly in the first sentence, then build the "
+            "analysis and recommendation around it. This is the long-form "
+            "report, not the chat reply: write 3-5 short paragraphs rather than "
+            "the usual 4-6 sentences, still citing the figures exactly as given."
+        )
 
-    summary = complete(SYSTEM_PROMPT, user_message, max_tokens=1024)
+    # The steered run is the deep dive and runs longer; 1024 truncates it.
+    summary = complete(SYSTEM_PROMPT, user_message, max_tokens=2048 if question else 1024)
 
     return {
         "available": summary is not None,

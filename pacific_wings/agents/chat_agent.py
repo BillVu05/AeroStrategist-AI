@@ -6,7 +6,7 @@ the deterministic simulation engine (Phases 3-7, `pacific_wings/simulation/engin
 the real market/macro context (`pacific_wings/agents/context.py`). The model decides which
 tools to call based on the user's free-form question, then writes one
 unified executive answer citing the returned figures - no separate
-Market/Risk/Strategy LLM calls (those remain in `pacific_wings/agents/graph.py` for the
+Market/Risk/Strategy LLM calls (those remain in `pacific_wings/agents/copilot.py` for the
 `/copilot` endpoint, untouched by this module).
 """
 
@@ -227,6 +227,8 @@ def forecast_demand_trend(
         load_factors: list[float] = []
         monthly: list[dict] = []
 
+        failed_months: list[dict] = []
+
         for month in range(1, 13):
             try:
                 r = _engine.compare(destination, year, month)
@@ -240,10 +242,16 @@ def forecast_demand_trend(
                 annual_profit += profit
                 load_factors.append(lf)
                 monthly.append({"month": month, "passengers": round(pax), "load_factor": round(lf, 3)})
-            except Exception:
-                monthly.append({"month": month, "passengers": 0, "load_factor": 0.0})
+            except Exception as exc:
+                # A failed month used to be written as zero passengers, so a
+                # year that half failed reported a plausible half-size total
+                # and the LLM quoted it as fact. Mark it instead, and say on
+                # the year that the total is incomplete.
+                failed_months.append({"month": month, "error": f"{type(exc).__name__}: {exc}"})
+                monthly.append({"month": month, "failed": True, "error": f"{type(exc).__name__}: {exc}"})
 
-        peak = max(monthly, key=lambda m: m["passengers"])
+        priced = [m for m in monthly if not m.get("failed")]
+        peak = max(priced, key=lambda m: m["passengers"]) if priced else {"month": None}
         avg_lf = sum(load_factors) / len(load_factors) if load_factors else 0.0
         yoy = round((annual_pax / prev_pax - 1) * 100, 1) if prev_pax else None
 
@@ -254,6 +262,9 @@ def forecast_demand_trend(
             "avg_load_factor": round(avg_lf, 3),
             "peak_month": peak["month"],
             "yoy_growth_pct": yoy,
+            "months_simulated": len(priced),
+            "incomplete": bool(failed_months),
+            "failed_months": failed_months,
             "monthly": monthly,
         }
         prev_pax = annual_pax
@@ -274,6 +285,7 @@ def rank_future_opportunities(year: int = 2026, month: int = 6) -> dict:
         month: Representative month to simulate (1-12). Defaults to 6 (June).
     """
     ranked = []
+    failed: list[dict] = []
     for route in _engine.ref.routes_by_destination.values():
         dest = route["destination"]
         try:
@@ -289,11 +301,14 @@ def rank_future_opportunities(year: int = 2026, month: int = 6) -> dict:
                 "projected_load_factor": round(b["demand"]["load_factor"], 3),
                 "projected_market_share_pct": round(b["market_share"]["pacific_wings_share"] * 100, 1),
             })
-        except Exception:
-            pass
+        except Exception as exc:
+            # Silently dropping a route made this a ranking of "whatever
+            # happened to compute", with nothing on the answer saying a
+            # destination was missing from it.
+            failed.append({"destination": dest, "error": f"{type(exc).__name__}: {exc}"})
 
     ranked.sort(key=lambda r: r["projected_profit_usd"], reverse=True)
-    return {"year": year, "month": month, "routes": ranked}
+    return {"year": year, "month": month, "routes": ranked, "failed_routes": failed}
 
 
 def project_macro_indicators(
@@ -468,11 +483,14 @@ def compare_new_routes(
         fuel_price_usd_per_gallon: Optional fuel price scenario (defaults to
             current reference price).
     """
-    return compare_route_alternatives(
-        destinations,
-        weekly_frequency=weekly_frequency,
-        fuel_price_usd_per_gallon=fuel_price_usd_per_gallon,
-    )
+    try:
+        return compare_route_alternatives(
+            destinations,
+            weekly_frequency=weekly_frequency,
+            fuel_price_usd_per_gallon=fuel_price_usd_per_gallon,
+        )
+    except ValueError as exc:
+        return {"error": str(exc)}
 
 
 CHAT_TOOLS = [

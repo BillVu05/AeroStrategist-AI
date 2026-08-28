@@ -57,7 +57,7 @@ passengers carried
         └──► open-route screening (gravity model for any world airport)
         │
         ▼
-AI agent layer (LangGraph report pipeline + conversational copilot)
+AI agent layer (five-agent report pipeline + conversational copilot)
 ```
 
 **The direction of the arrows is the point.** The model forecasts the whole
@@ -187,11 +187,19 @@ correction belonging to a model that was no longer in production, which
 rendered as an asymmetric band skewed 28% upward on a base near 3,000.
 
 The band is applied to the **market** forecast, which is what was measured.
-Pacific Wings' band is that band times its share, then capped by what it can
-actually fly — the same treatment the point estimate gets, so the interval and
-the point stay consistent. On a spilling route the two collapse together, which
-is correct: if you are turning demand away, your carried passengers really are
-certain, and it is the spill that is uncertain.
+Pacific Wings' band is that band times its share — a band on **demand**, so it
+is not capped at what can be flown, because the point estimate it brackets
+(`predicted_passengers`) is not capped either.
+
+It used to be clipped at sellable seats, and the clip was defended here as
+"the two collapse together on a spilling route, which is correct". They are not
+the same quantity: the point estimate is uncapped demand and only the ends were
+clipped, so on every capacity-bound route the interval excluded its own point
+estimate — SIN 2026-07 published low = 5,353, point = 6,560, high = 5,353, a
+zero-width band around a number outside it. The load-factor band
+(`predicted_load_factor_low/high`) is where the capacity story belongs, and it
+carries each end of the demand band through the same spill curve the point
+estimate uses.
 
 This is **not** quantile regression or any model-native uncertainty. It is the
 empirically observed error distribution, applied as an offset. Cheap,
@@ -842,7 +850,7 @@ response must trace back to a deterministic function call from Sections 1-10
 above. The LLM is only ever allowed to *narrate* numbers, never invent or
 recompute them.
 
-- **`/copilot`** runs a fixed 5-agent LangGraph pipeline: `simulation → demand
+- **`/copilot`** runs a fixed 5-agent pipeline: `simulation → demand
   → finance → market → risk → strategy`. Demand and Finance are pure
   extractions from `SimulationEngine.compare()` output — no LLM call, so
   they're bit-for-bit reproducible. Market, Risk, and Strategy each make a

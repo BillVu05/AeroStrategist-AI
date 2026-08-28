@@ -28,6 +28,8 @@ import RouteProfitabilityTable, { type ProfitabilityRow } from "@/components/Rou
 import MiniBarPanel from "@/components/MiniBarPanel";
 import OpenRouteForm from "@/components/OpenRouteForm";
 import { RouteAnalysisReport, RouteComparisonList } from "@/components/RouteAnalysisCard";
+import { fmtUsd } from "@/lib/format";
+import { downloadText } from "@/lib/download";
 
 const PREVIOUS_MONTH = DEFAULT_MONTH === 1 ? 12 : DEFAULT_MONTH - 1;
 const PREVIOUS_YEAR = DEFAULT_MONTH === 1 ? DEFAULT_YEAR - 1 : DEFAULT_YEAR;
@@ -42,13 +44,6 @@ interface SelectedData {
   demandSeries: { label: string; value: number }[];
 }
 
-function fmtUsd(value: number) {
-  const abs = Math.abs(value);
-  const sign = value < 0 ? "-" : "";
-  if (abs >= 1e6) return `${sign}$${(abs / 1e6).toFixed(1)}M`;
-  if (abs >= 1e3) return `${sign}$${(abs / 1e3).toFixed(0)}K`;
-  return `${sign}$${abs.toFixed(0)}`;
-}
 
 function csvEscape(value: string | number) {
   const s = String(value);
@@ -72,13 +67,11 @@ function downloadCsv(rows: ProfitabilityRow[]) {
       ].join(",")
     );
   }
-  const blob = new Blob([lines.join("\n")], { type: "text/csv" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = `route_profitability_${DEFAULT_YEAR}_${DEFAULT_MONTH}.csv`;
-  a.click();
-  URL.revokeObjectURL(url);
+  downloadText(
+    `route_profitability_${DEFAULT_YEAR}_${DEFAULT_MONTH}.csv`,
+    lines.join("\n"),
+    "text/csv",
+  );
 }
 
 function riskBadge(row: ProfitabilityRow) {

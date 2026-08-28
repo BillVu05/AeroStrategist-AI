@@ -5,29 +5,10 @@
 // for free.
 
 import type { AnalyzeRouteResponse, CompareRoutesResponse, OpenRouteAgentEvidence } from "@/lib/types";
+import { fmtPax, fmtUsd } from "@/lib/format";
+import { AGENT_META } from "@/lib/reportMeta";
 
-function fmtUsd(v: number) {
-  const abs = Math.abs(v);
-  const sign = v < 0 ? "-" : "";
-  if (abs >= 1e9) return `${sign}$${(abs / 1e9).toFixed(2)}B`;
-  if (abs >= 1e6) return `${sign}$${(abs / 1e6).toFixed(1)}M`;
-  if (abs >= 1e3) return `${sign}$${(abs / 1e3).toFixed(0)}K`;
-  return `${sign}$${abs.toFixed(0)}`;
-}
 
-function fmtPax(v: number) {
-  if (v >= 1e6) return `${(v / 1e6).toFixed(2)}M`;
-  if (v >= 1e3) return `${(v / 1e3).toFixed(0)}K`;
-  return String(Math.round(v));
-}
-
-const AGENT_META: Record<string, { icon: string; label: string }> = {
-  demand: { icon: "trending_up", label: "Demand Agent" },
-  finance: { icon: "monitoring", label: "Finance Agent" },
-  market: { icon: "travel_explore", label: "Market Agent" },
-  risk: { icon: "shield", label: "Risk Agent" },
-  strategy: { icon: "psychology", label: "Strategy Agent" },
-};
 
 function AgentBlock({
   agent,

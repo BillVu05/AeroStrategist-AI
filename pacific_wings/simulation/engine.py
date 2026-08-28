@@ -278,7 +278,6 @@ class SimulationEngine:
                     "tourism": round(tourism_multiplier, 4),
                     "gdp_shock": round(gdp_multiplier, 4),
                 },
-                "market_growth_multiplier": round(growth_multiplier, 4),
                 "predicted_demand_passengers": round(own_demand),
                 "capacity_monthly": round(capacity_monthly),
                 "sellable_seats": round(sellable),

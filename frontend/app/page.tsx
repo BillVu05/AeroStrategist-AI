@@ -10,6 +10,7 @@ import LoadingSpinner from "@/components/LoadingSpinner";
 import ErrorMessage from "@/components/ErrorMessage";
 import KpiCard from "@/components/KpiCard";
 import AgentStatusPanel from "@/components/AgentStatusPanel";
+import { fmtUsd } from "@/lib/format";
 
 const RouteMap = dynamic(() => import("@/components/RouteMap"), { ssr: false });
 
@@ -26,14 +27,6 @@ interface DashboardData {
   topRoute: RouteSummary;
 }
 
-function fmtUsd(value: number) {
-  const abs = Math.abs(value);
-  const sign = value < 0 ? "-" : "";
-  if (abs >= 1e9) return `${sign}$${(abs / 1e9).toFixed(2)}B`;
-  if (abs >= 1e6) return `${sign}$${(abs / 1e6).toFixed(1)}M`;
-  if (abs >= 1e3) return `${sign}$${(abs / 1e3).toFixed(0)}K`;
-  return `${sign}$${abs.toFixed(0)}`;
-}
 
 function fmtPct(value: number, digits = 1) {
   return `${(value * 100).toFixed(digits)}%`;
@@ -76,6 +69,14 @@ export default function ExecutiveDashboardPage() {
             return { route, current, previous };
           })
         );
+
+        // `reduce` with no seed throws on an empty array, and every average
+        // below divides by summaries.length. A profile with no active route is
+        // an empty dashboard, not a TypeError and a page of NaN.
+        if (activeRoutes.length === 0) {
+          if (!cancelled) setError("No active routes in the airline profile - nothing to report on.");
+          return;
+        }
 
         const topRoute = summaries.reduce((best, s) =>
           s.current.baseline.profit_usd > best.current.baseline.profit_usd ? s : best

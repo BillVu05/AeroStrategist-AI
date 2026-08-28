@@ -1,3 +1,5 @@
+"use client";
+
 // Renders a completed /copilot (5-agent pipeline) result. Shared between
 // /reports/new (right after a fresh run) and /reports/[id] (viewing a saved
 // report from the Strategic Report Library), so both stay pixel-identical
@@ -6,23 +8,11 @@
 import type { CopilotResponse } from "@/lib/types";
 import { MONTH_NAMES } from "@/lib/constants";
 import AvailabilityNotice from "@/components/AvailabilityNotice";
+import { fmtDelta, fmtPax, fmtUsd } from "@/lib/format";
+import { downloadText, printPage } from "@/lib/download";
 
-function fmtUsd(v: number) {
-  const abs = Math.abs(v);
-  const sign = v < 0 ? "-" : "";
-  if (abs >= 1e6) return `${sign}$${(abs / 1e6).toFixed(1)}M`;
-  if (abs >= 1e3) return `${sign}$${(abs / 1e3).toFixed(0)}K`;
-  return `${sign}$${abs.toFixed(0)}`;
-}
 
-function fmtPax(v: number) {
-  if (v >= 1e3) return `${(v / 1e3).toFixed(0)}K`;
-  return v.toFixed(0);
-}
 
-function fmtDelta(v: number, fmt: (x: number) => string) {
-  return `${v >= 0 ? "+" : ""}${fmt(v)}`;
-}
 
 function parseRecommendation(summary: string): "PROCEED" | "CAUTION" | "NO-GO" {
   const lower = summary.toLowerCase();
@@ -597,28 +587,35 @@ export default function CopilotReportView({ report }: { report: CopilotResponse 
         </div>
       </div>
 
-      {/* ── export actions ── */}
-      <div className="flex flex-wrap items-center gap-3">
-        <span className="font-label text-[10px] uppercase tracking-widest text-on-surface-variant">Export as:</span>
-        {(["PDF", "PPTX", "XLSX", "BRIEF"] as const).map((fmt) => (
-          <button
-            key={fmt}
-            type="button"
-            className="glass-panel flex items-center gap-1.5 rounded px-3 py-1.5 font-label text-xs text-on-surface transition-colors hover:bg-white/10"
-          >
-            <span className="material-symbols-outlined text-[14px]">download</span>
-            {fmt}
-          </button>
-        ))}
-        <div className="ml-auto">
-          <button
-            type="button"
-            className="flex items-center gap-2 rounded bg-accent-blue px-4 py-2 font-label text-xs font-medium text-white transition-colors hover:bg-blue-700"
-          >
-            <span className="material-symbols-outlined text-[16px]">send</span>
-            Finalize &amp; Distribute to Board
-          </button>
-        </div>
+      {/* ── export actions ──
+          Was four format buttons (PDF/PPTX/XLSX/BRIEF) and a "Distribute to
+          Board" button, none of which had a handler. PDF is the browser's own
+          print-to-PDF; JSON is the exact payload this page renders. There is
+          no distribution backend, so there is no button claiming one. */}
+      <div className="no-print flex flex-wrap items-center gap-3">
+        <span className="font-label text-[10px] uppercase tracking-widest text-on-surface-variant">Export:</span>
+        <button
+          type="button"
+          onClick={printPage}
+          className="glass-panel flex items-center gap-1.5 rounded px-3 py-1.5 font-label text-xs text-on-surface transition-colors hover:bg-white/10"
+        >
+          <span className="material-symbols-outlined text-[14px]">print</span>
+          Print / Save as PDF
+        </button>
+        <button
+          type="button"
+          onClick={() =>
+            downloadText(
+              `pacific_wings_${report.destination}_${report.year}_${report.month}.json`,
+              JSON.stringify(report, null, 2),
+              "application/json",
+            )
+          }
+          className="glass-panel flex items-center gap-1.5 rounded px-3 py-1.5 font-label text-xs text-on-surface transition-colors hover:bg-white/10"
+        >
+          <span className="material-symbols-outlined text-[14px]">download</span>
+          JSON
+        </button>
       </div>
 
       {/* ── scenario config ── */}

@@ -3,13 +3,13 @@ Multi-agent narrative layer for new/candidate-route analysis (analysis/open_rout
 
 `analyze_open_route()` is a deterministic gravity-model + cost/revenue engine -
 no LLM involved. This module adds the same Demand/Finance/Market/Risk/Strategy
-voice split used for existing routes (demand_agent.py, finance_agent.py,
-market_agent.py, risk_agent.py, strategy_agent.py via pacific_wings/agents/graph.py), adapted
+voice split used for existing routes (copilot.py's summarize_demand /
+summarize_finance, plus market_agent.py, risk_agent.py, strategy_agent.py), adapted
 to the analysis/open_route.py output shape so it also works for destinations
 outside the Pacific Wings network.
 
 Demand and Finance are pure label/extract functions (no LLM, matching
-demand_agent.py/finance_agent.py). Market, Risk, and Strategy each make their
+copilot.py's summarize_demand/summarize_finance). Market, Risk, and Strategy each make their
 own Gemini call via pacific_wings/agents/llm_client.py and degrade to UNAVAILABLE_NOTICE if
 no key is configured or the call fails.
 """
@@ -50,7 +50,7 @@ figures provided. {_PLAIN_TEXT_RULE}"""
 
 
 def _demand_summary(analysis: dict) -> dict:
-    """Pure extract/label of demand-side facts - no LLM, mirrors demand_agent.py."""
+    """Pure extract/label of demand-side facts - no LLM, mirrors copilot.summarize_demand."""
     market = analysis["market"]
     demand = analysis["demand_estimate"]
     return {
@@ -63,7 +63,7 @@ def _demand_summary(analysis: dict) -> dict:
 
 
 def _finance_summary(analysis: dict) -> dict:
-    """Pure extract/label of revenue/cost/profit facts - no LLM, mirrors finance_agent.py."""
+    """Pure extract/label of revenue/cost/profit facts - no LLM, mirrors copilot.summarize_finance."""
     fin = analysis["financials"]
     return {
         "annual_revenue_usd": fin["annual_revenue_usd"],

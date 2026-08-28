@@ -59,16 +59,8 @@ export default function Nav() {
         })}
       </nav>
 
-      {/* System Config */}
-      <div className="mt-auto px-3">
-        <Link
-          href="#"
-          className="flex items-center gap-3 px-3 py-3 font-label text-[11px] tracking-wide text-on-surface-variant/60 transition-all hover:bg-white/5 hover:text-on-surface"
-        >
-          <span className="material-symbols-outlined text-[18px]">settings</span>
-          System Config
-        </Link>
-      </div>
+      {/* There was a "System Config" link here pointing at href="#". There is
+          no settings screen, so there is no link claiming one. */}
     </aside>
   );
 }

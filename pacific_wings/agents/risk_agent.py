@@ -24,7 +24,7 @@ economic/tourism sensitivity). Be concise (one sentence per risk). Do not \
 invent numbers - reference only the figures provided."""
 
 
-def analyze(market_ctx: dict, simulation: dict) -> dict:
+def analyze(market_ctx: dict, simulation: dict, question: str | None = None) -> dict:
     """Returns {"available": bool, "risks": str}."""
     user_message = (
         "Route market data (JSON):\n"
@@ -33,6 +33,8 @@ def analyze(market_ctx: dict, simulation: dict) -> dict:
         f"{json.dumps(simulation, indent=2)}\n\n"
         "Identify the key risks."
     )
+    if question:
+        user_message += f"\n\nFocus on the risks that bear on this question: {question}"
 
     risks = complete(SYSTEM_PROMPT, user_message)
 
